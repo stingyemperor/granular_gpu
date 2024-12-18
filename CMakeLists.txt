@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
-include(CheckLanguage)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project(
@@ -7,42 +6,52 @@ project(
   VERSION "0.1.0"
   LANGUAGES CXX CUDA)
 
-add_custom_target("${PROJECT_NAME}")
+# Find the CUDA Toolkit
+find_package(CUDAToolkit REQUIRED)
 
-# Check for CUDA
-check_language(CUDA)
-
-# Check if CUDA is found
-if(CMAKE_CUDA_COMPILER)
-  enable_language(CUDA)
-  message(STATUS "Found CUDA: ${CMAKE_CUDA_COMPILER}")
-  message(STATUS "CUDA Version: ${CMAKE_CUDA_COMPILER_VERSION}")
-  message(STATUS "CUDA Include dirs: ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
-  message(STATUS "CUDA Library dirs: ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES}")
-
-  include_directories("${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
-  link_directories("${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES}")
-
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall")
-  set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CUDA_COMPILER}")
-  set(CMAKE_CUDA_STANDARD 17)
-  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-  set(CMAKE_CUDA_ARCHITECTURES "70;75;80;86")
-else()
-  message(FATAL_ERROR "CUDA not found.")
-endif()
+# Find OpenGL, GLEW, and GLUT
+find_package(OpenGL REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(GLUT REQUIRED)
 
 # Set the source directory
 set(SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")
 
-# If you want build the targets seperately:
+# Recursively find all .cpp and .cu files in the src directory
+file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS "${SOURCE_DIR}/*.cpp"
+     "${SOURCE_DIR}/*.hpp" "${SOURCE_DIR}/*.cu")
 
-function(add_target TARGET_NAME)
-  # Add the target
-  add_dependencies("${PROJECT_NAME}" "${TARGET_NAME}")
-  add_executable("${TARGET_NAME}" "${SOURCE_DIR}/${TARGET_NAME}.cu")
-  target_link_libraries(${TARGET_NAME} PRIVATE cuda cudart)
-  message(STATUS "Added target: ${TARGET_NAME}")
-endfunction()
+# Create an executable target from all source files
+add_executable(main ${SOURCE_FILES})
 
-add_target("main")
+# Include directories for CUDA, GLEW, and GLUT The find_package calls above
+# typically set variables like: GLEW_INCLUDE_DIRS, GLUT_INCLUDE_DIRS, and
+# OpenGL_INCLUDE_DIR. Check the exact variable names created by your find
+# modules.
+target_include_directories(
+  main PRIVATE ${CUDAToolkit_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS}
+               ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR})
+
+# Link against CUDA runtime, GLEW, GLUT, and OpenGL libraries
+target_link_libraries(
+  main
+  PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES}
+          ${OPENGL_gl_LIBRARY} # Typically provided by find_package(OpenGL)
+)
+
+# Set CUDA-specific compilation flags
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall")
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
+
+# If you previously wanted a custom target for the project:
+add_custom_target("${PROJECT_NAME}")
+add_dependencies("${PROJECT_NAME}" main)
+
+# Debug messages
+message(STATUS "CMAKE_CUDA_COMPILER_VERSION: ${CMAKE_CUDA_COMPILER_VERSION}")
+message(STATUS "CUDAToolkit_INCLUDE_DIRS: ${CUDAToolkit_INCLUDE_DIRS}")
+message(STATUS "GLEW_INCLUDE_DIRS: ${GLEW_INCLUDE_DIRS}")
+message(STATUS "GLUT_INCLUDE_DIRS: ${GLUT_INCLUDE_DIRS}")
+message(STATUS "OPENGL_INCLUDE_DIR: ${OPENGL_INCLUDE_DIR}")

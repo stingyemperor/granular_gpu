@@ -1,3 +1,4 @@
+#include "Global.hpp"
 #include "ShaderUtility.hpp"
 #include <GL/freeglut.h>
 #include <cuda_runtime.h>
