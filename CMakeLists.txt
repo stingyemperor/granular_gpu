@@ -24,19 +24,22 @@ file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS "${SOURCE_DIR}/*.cpp"
 # Create an executable target from all source files
 add_executable(main ${SOURCE_FILES})
 
-# Include directories for CUDA, GLEW, and GLUT The find_package calls above
-# typically set variables like: GLEW_INCLUDE_DIRS, GLUT_INCLUDE_DIRS, and
-# OpenGL_INCLUDE_DIR. Check the exact variable names created by your find
-# modules.
+# Include directories for CUDA, GLEW, GLUT, and OpenGL
 target_include_directories(
-  main PRIVATE ${CUDAToolkit_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS}
-               ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR})
+  main PRIVATE ${CUDAToolkit_INCLUDE_DIRS}
+               ${GLEW_INCLUDE_DIRS}
+               ${GLUT_INCLUDE_DIRS}
+               ${OPENGL_INCLUDE_DIR}
+)
 
 # Link against CUDA runtime, GLEW, GLUT, and OpenGL libraries
 target_link_libraries(
   main
-  PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES}
-          ${OPENGL_gl_LIBRARY} # Typically provided by find_package(OpenGL)
+  PRIVATE CUDA::cudart
+          ${GLEW_LIBRARIES}
+          ${GLUT_LIBRARIES}
+          OpenGL::GL
+          GLU  # Add GLU library
 )
 
 # Set CUDA-specific compilation flags
@@ -44,10 +47,6 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall")
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
-
-# If you previously wanted a custom target for the project:
-add_custom_target("${PROJECT_NAME}")
-add_dependencies("${PROJECT_NAME}" main)
 
 # Debug messages
 message(STATUS "CMAKE_CUDA_COMPILER_VERSION: ${CMAKE_CUDA_COMPILER_VERSION}")
