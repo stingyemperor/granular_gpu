@@ -18,28 +18,27 @@ find_package(GLUT REQUIRED)
 set(SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")
 
 # Recursively find all .cpp and .cu files in the src directory
-file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS "${SOURCE_DIR}/*.cpp"
-     "${SOURCE_DIR}/*.hpp" "${SOURCE_DIR}/*.cu")
+file(
+  GLOB_RECURSE
+  SOURCE_FILES
+  CONFIGURE_DEPENDS
+  "${SOURCE_DIR}/*.cpp"
+  "${SOURCE_DIR}/*.hpp"
+  "${SOURCE_DIR}/*.cu"
+  "${SOURCE_DIR}/*.h")
 
 # Create an executable target from all source files
 add_executable(main ${SOURCE_FILES})
 
 # Include directories for CUDA, GLEW, GLUT, and OpenGL
 target_include_directories(
-  main PRIVATE ${CUDAToolkit_INCLUDE_DIRS}
-               ${GLEW_INCLUDE_DIRS}
-               ${GLUT_INCLUDE_DIRS}
-               ${OPENGL_INCLUDE_DIR}
-)
+  main PRIVATE ${CUDAToolkit_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS}
+               ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR})
 
 # Link against CUDA runtime, GLEW, GLUT, and OpenGL libraries
 target_link_libraries(
-  main
-  PRIVATE CUDA::cudart
-          ${GLEW_LIBRARIES}
-          ${GLUT_LIBRARIES}
-          OpenGL::GL
-          GLU  # Add GLU library
+  main PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES} OpenGL::GL
+               GLU # Add GLU library
 )
 
 # Set CUDA-specific compilation flags

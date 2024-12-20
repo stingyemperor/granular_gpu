@@ -1,6 +1,9 @@
 #include "ShaderUtility.hpp"
-
 #include <GL/glew.h>
+#if defined(_WIN32)
+
+#include <GL/wglew.h>
+#endif
 #include <GL/glew.h>
 #include <cmath>
 #include <fstream>
