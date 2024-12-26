@@ -9,9 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
-
-__global__ void hello() { printf("Hello World from GPU!\n"); }
-
+ 
 // vbo and GL variables
 static GLuint particlesVBO;
 static GLuint particlesColorVBO;

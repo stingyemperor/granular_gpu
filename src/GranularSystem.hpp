@@ -1,12 +1,14 @@
 #pragma once
 #include "GranularParticles.hpp"
+#include "Solver.hpp"
+#include <memory>
 
 class GranularSystem {
 public:
   GranularSystem(std::shared_ptr<GranularParticles> &particles,
                  std::shared_ptr<GranularParticles> &boundary_particles,
-                 // TODO add solver
-                 float3 spaceSize, float cell_length, float dt, int3 cell_size);
+                 float3 space_size, float cell_length, float dt,
+                 int3 cell_size);
 
   GranularSystem(const GranularSystem &) = delete;
   GranularSystem &operator=(const GranularSystem &) = delete;
@@ -32,14 +34,20 @@ private:
   std::shared_ptr<GranularParticles> _particles;
   const std::shared_ptr<GranularParticles> _boundaries;
 
-  // TODO add solver
-  DArray<int> _cell_start_fluid;
+  // TODO: add solver
+  /**
+   * @brief start index of the cell
+   */
+  DArray<int> _cell_start_particle;
   DArray<int> _cell_start_boundary;
   const float _cell_length;
   const float3 _space_size;
   const float _dt;
   const int3 _cell_size;
+  /** \brief Device array to hold the cell index of each particle*/
   DArray<int> _buffer_int;
+
+  Solver _solver;
 
   void compute_boundary_mass();
   void neighbor_search(const std::shared_ptr<GranularParticles> &particles,

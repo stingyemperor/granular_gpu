@@ -42,7 +42,11 @@ target_link_libraries(
 )
 
 # Set CUDA-specific compilation flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall ")
+set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} --no-cuda-version-check")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-warning-option")
+# Add a conditional option to avoid passing it to clang
+set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -forward-unknown-to-host-compiler")
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
