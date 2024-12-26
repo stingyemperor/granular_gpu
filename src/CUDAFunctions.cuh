@@ -124,3 +124,6 @@ inline __device__ float3 surface_tension_kernel_gradient(float3 r,
                                      : (cube(radius - x) * cube(x)));
   }
 }
+
+
+

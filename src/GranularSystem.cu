@@ -14,10 +14,10 @@ GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
     std::shared_ptr<GranularParticles> &boundary_particles,
     const float3 space_size, const float cell_length, const float dt,
-    int3 cell_size)
+    const float3 g, int3 cell_size)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)), _solver(_particles),
-      _space_size(space_size), _dt(dt), _cell_length(cell_length),
+      _space_size(space_size), _dt(dt), _g(g), _cell_length(cell_length),
       _cell_start_particle(cell_size.x * cell_size.y * cell_size.z + 1),
       _cell_start_boundary(cell_size.x * cell_size.y * cell_size.z + 1),
       _cell_size(cell_size),
@@ -79,18 +79,22 @@ float GranularSystem::step() {
   // CUDA_CALL(cudaEventRecord(start, 0));
 
   neighbor_search(_particles, _cell_start_particle);
+  _solver.step(_particles, _boundaries, _cell_start_particle,
+               _cell_start_boundary, _space_size, _cell_size, _cell_length, _dt,
+               _g);
   // try {
-  // 	_solver->step(_fluids, _boundaries, cellStartFluid, cellStartBoundary,
-  // 		_spaceSize, _cellSize, _sphCellLength, _sphSmoothingRadius,
-  // 		_dt, _sphRho0, _sphRhoBoundary, _sphStiff, _sphVisc, _sphG,
-  // 		_sphSurfaceTensionIntensity, _sphAirPressure);
-  // 	cudaDeviceSynchronize(); CHECK_KERNEL();
+  // 	_solver->step(_fluids, _boundaries, cellStartFluid,
+  // cellStartBoundary, 		_spaceSize, _cellSize, _sphCellLength,
+  // _sphSmoothingRadius, 		_dt, _sphRho0, _sphRhoBoundary,
+  // _sphStiff, _sphVisc, _sphG, 		_sphSurfaceTensionIntensity,
+  // _sphAirPressure); 	cudaDeviceSynchronize(); CHECK_KERNEL();
   // }
   // catch (const char* s) {
   // 	std::cout << s << "\n";
   // }
   // catch (...) {
-  // 	std::cout << "Unknown Exception at "<<__FILE__<<": line "<<__LINE__ <<
+  // 	std::cout << "Unknown Exception at "<<__FILE__<<": line
+  // "<<__LINE__ <<
   // "\n";
   // }
 

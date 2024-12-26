@@ -9,7 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
- 
+
 // vbo and GL variables
 static GLuint particlesVBO;
 static GLuint particlesColorVBO;
@@ -33,6 +33,7 @@ bool running = false;
 std::shared_ptr<GranularSystem> p_system;
 const float3 space_size = make_float3(1.0f);
 const float dt = 0.002f;
+const float3 G = make_float3(0.0f, -9.8f, 0.0f);
 const float sphSpacing = 0.02f;
 const float smoothing_radius = 2.0f * sphSpacing;
 const float cell_length = 1.01f * smoothing_radius;
@@ -94,9 +95,9 @@ void init_granular_system() {
   }
 
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
-  p_system =
-      std::make_shared<GranularSystem>(granular_particles, boundary_particles,
-                                       space_size, cell_length, dt, cell_size);
+  p_system = std::make_shared<GranularSystem>(granular_particles,
+                                              boundary_particles, space_size,
+                                              cell_length, dt, G, cell_size);
 }
 
 void createVBO(GLuint *vbo, const unsigned int length) {
@@ -207,9 +208,10 @@ void renderParticles(void) {
   return;
 }
 
-// TODO add step
+// TODO: add step
 void one_step() {
   ++frameId;
+  p_system->step();
   // TODO fix
   // const auto milliseconds = p_system->step();
   // totalTime += milliseconds;
@@ -236,9 +238,10 @@ void initGL(void) {
 }
 
 static void displayFunc(void) {
-  // if (running) {
-  //   oneStep();
-  // }
+  if (running) {
+    one_step();
+  }
+
   glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

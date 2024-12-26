@@ -13,14 +13,16 @@ public:
         _buffer_float(particles->size()), _buffer_float3(particles->size()) {}
   void step(std::shared_ptr<GranularParticles> &paticles,
             const std::shared_ptr<GranularParticles> &boundary,
-            const DArray<int> &cell_start_fluid,
+            const DArray<int> &cell_start_particle,
             const DArray<int> &cell_start_boundary, float3 space_size,
-            int3 cell_size, float cell_length, float radius, float dt,
-            float3 G);
+            int3 cell_size, float cell_length, float dt, float3 G);
   ~Solver() {};
   void update_neighborhood(const std::shared_ptr<GranularParticles> &particles);
   void add_external_force(std::shared_ptr<GranularParticles> &particles,
                           float dt, float3 G);
+
+  void update_particle_positions(std::shared_ptr<GranularParticles> &particles,
+                                 float dt);
 
 private:
   const int _max_iter;
