@@ -10,7 +10,8 @@ class Solver {
 public:
   Solver(const std::shared_ptr<GranularParticles> &particles)
       : _max_iter(20), _buffer_int(particles->size()),
-        _buffer_float(particles->size()), _buffer_float3(particles->size()) {}
+        _buffer_float(particles->size()), _buffer_float3(particles->size()),
+        _pos_t(particles->size()) {}
   void step(std::shared_ptr<GranularParticles> &paticles,
             const std::shared_ptr<GranularParticles> &boundary,
             const DArray<int> &cell_start_particle,
@@ -24,9 +25,12 @@ public:
   void update_particle_positions(std::shared_ptr<GranularParticles> &particles,
                                  float dt);
 
+  void final_update(std::shared_ptr<GranularParticles> &particles, float dt);
+
 private:
   const int _max_iter;
   DArray<int> _buffer_int;
   DArray<float> _buffer_float;
   DArray<float3> _buffer_float3;
+  DArray<float3> _pos_t;
 };

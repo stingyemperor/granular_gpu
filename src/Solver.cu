@@ -17,6 +17,7 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   // update velocity
   add_external_force(particles, dt, G);
   update_particle_positions(particles, dt);
+  final_update(particles, dt);
 }
 
 void Solver::update_neighborhood(
@@ -40,18 +41,19 @@ void Solver::add_external_force(std::shared_ptr<GranularParticles> &particles,
                     particles->get_vel_ptr(), ThrustHelper::plus<float3>(dv));
 }
 
-struct update_position_functor {
+struct predict_position_functor {
   float dt;
 
-  update_position_functor(float _dt) : dt(_dt) {}
+  predict_position_functor(float _dt) : dt(_dt) {}
 
-  __host__ __device__ float3 operator()(const thrust::tuple<float3, float3> &t) const {
+  __host__ __device__ float3
+  operator()(const thrust::tuple<float3, float3> &t) const {
     const float3 &pos = thrust::get<0>(t);
     const float3 &vel = thrust::get<1>(t);
-    return make_float3(pos.x + dt * vel.x, pos.y + dt * vel.y, pos.z + dt * vel.z);
+    return make_float3(pos.x + dt * vel.x, pos.y + dt * vel.y,
+                       pos.z + dt * vel.z);
   }
 };
-
 
 void Solver::update_particle_positions(
     std::shared_ptr<GranularParticles> &particles, float dt) {
@@ -60,6 +62,8 @@ void Solver::update_particle_positions(
   // first element of the velocity buffer
 
   // Create zip iterator for positions and velocities
+  // We use a zip iterator because we need to loop through postions and
+  // velocties together
   auto begin = thrust::make_zip_iterator(
       thrust::make_tuple(particles->get_pos_ptr(), particles->get_vel_ptr()));
   auto end = thrust::make_zip_iterator(
@@ -67,7 +71,43 @@ void Solver::update_particle_positions(
                          particles->get_vel_ptr() + particles->size()));
 
   // Update positions by applying the 'update_position_functor' across the range
-  thrust::transform(thrust::device, begin, end,
-                    particles->get_pos_ptr(), // Output to the positions buffer
-                    update_position_functor(dt));
+  thrust::transform(
+      thrust::device, begin, end, _pos_t.addr(),
+      // particles->get_pos_ptr(), // Output to the positions buffer
+      predict_position_functor(dt));
+}
+
+struct final_velocity_functor {
+  float dt;
+
+  final_velocity_functor(float _dt) : dt(_dt) {}
+
+  __host__ __device__ float3
+  operator()(const thrust::tuple<float3, float3> &t) const {
+    const float dt_inv = 1 / dt;
+    const float3 &pos = thrust::get<0>(t);
+    const float3 &pos_t = thrust::get<1>(t);
+
+    return make_float3(dt_inv * (pos_t.x - pos.x), dt_inv * (pos_t.y - pos.y),
+                       dt_inv * (pos_t.z - pos.z));
+  }
+};
+
+void Solver::final_update(std::shared_ptr<GranularParticles> &particles,
+                          float dt) {
+
+  auto begin = thrust::make_zip_iterator(
+      thrust::make_tuple(particles->get_pos_ptr(), _pos_t.addr()));
+  auto end = thrust::make_zip_iterator(
+      thrust::make_tuple(particles->get_pos_ptr() + particles->size(),
+                         _pos_t.addr() + particles->size()));
+
+  thrust::transform(
+      thrust::device, begin, end, particles->get_vel_ptr(),
+      // particles->get_pos_ptr(), // Output to the positions buffer
+      final_velocity_functor(dt));
+
+  CUDA_CALL(cudaMemcpy(particles->get_pos_ptr(), _pos_t.addr(),
+                       sizeof(float3) * particles->size(),
+                       cudaMemcpyDeviceToDevice));
 }
