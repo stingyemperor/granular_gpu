@@ -177,7 +177,7 @@ void motionFunc(const int x, const int y) {
 
 extern "C" void
 generate_dots(float3 *dot, float3 *color,
-              const std::shared_ptr<GranularParticles> particles);
+              const std::shared_ptr<GranularParticles> particles, int *surface);
 
 void renderParticles(void) {
   // map OpenGL buffer object for writing from CUDA
@@ -187,7 +187,8 @@ void renderParticles(void) {
   CUDA_CALL(cudaGLMapBufferObject((void **)&cptr, particlesColorVBO));
 
   // calculate the dots' position and color
-  generate_dots(dptr, cptr, p_system->get_particles());
+  generate_dots(dptr, cptr, p_system->get_particles(),
+                p_system->get_particles()->get_surface_ptr());
 
   // unmap buffer object
   CUDA_CALL(cudaGLUnmapBufferObject(particlesVBO));

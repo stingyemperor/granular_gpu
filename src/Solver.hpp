@@ -11,7 +11,8 @@ public:
   Solver(const std::shared_ptr<GranularParticles> &particles)
       : _max_iter(20), _buffer_int(particles->size()),
         _buffer_float(particles->size()), _buffer_float3(particles->size()),
-        _pos_t(particles->size()), _num_constraints(particles->size()) {}
+        _pos_t(particles->size()), _num_constraints(particles->size()),
+        _buffer_merge(particles->size()), _buffer_split(particles->size()) {}
   void step(std::shared_ptr<GranularParticles> &paticles,
             const std::shared_ptr<GranularParticles> &boundary,
             const DArray<int> &cell_start_particle,
@@ -34,6 +35,8 @@ public:
 
   void final_update(std::shared_ptr<GranularParticles> &particles, float dt);
 
+  void merge(std::shared_ptr<GranularParticles> &particles);
+
 private:
   const int _max_iter;
   DArray<int> _buffer_int;
@@ -41,4 +44,6 @@ private:
   DArray<float3> _buffer_float3;
   DArray<float3> _pos_t;
   DArray<int> _num_constraints;
+  DArray<int> _buffer_merge;
+  DArray<int> _buffer_split;
 };

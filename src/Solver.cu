@@ -55,7 +55,7 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   final_update(particles, dt);
 }
 
-// NOTE: Seems to cause issues
+// NOTE: Seems to cause issues with incorrect neighbors
 void Solver::update_neighborhood(
     const std::shared_ptr<GranularParticles> &particles) {
 

@@ -9,6 +9,7 @@
 #include <thrust/fill.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
+#include <vector_functions.h>
 
 GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
@@ -23,7 +24,7 @@ GranularSystem::GranularSystem(
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _radius(radius) {
+      _radius(radius), _buffer_boundary(_particles->size()) {
   // initalize the boundary_particles
   neighbor_search(_boundaries, _cell_start_boundary);
   // Set the mass of all the particles to 1
@@ -32,7 +33,6 @@ GranularSystem::GranularSystem(
   neighbor_search(_particles, _cell_start_particle);
 
   step();
-  CHECK_KERNEL();
 }
 
 void GranularSystem::neighbor_search(
@@ -80,24 +80,20 @@ float GranularSystem::step() {
   // CUDA_CALL(cudaEventRecord(start, 0));
 
   neighbor_search(_particles, _cell_start_particle);
-  _solver.step(_particles, _boundaries, _cell_start_particle,
-               _cell_start_boundary, _space_size, _cell_size, _cell_length, _dt,
-               _g, _radius);
-  // try {
-  // 	_solver->step(_fluids, _boundaries, cell_startFluid,
-  // cell_startBoundary, 		_spaceSize, _cell_size, _sphCellLength,
-  // _sphSmoothingRadius, 		_dt, _sphRho0, _sphRhoBoundary,
-  // _sphStiff, _sphVisc, _sphG, 		_sphSurfaceTensionIntensity,
-  // _sphAirPressure); 	cudaDeviceSynchronize(); CHECK_KERNEL();
-  // }
-  // catch (const char* s) {
-  // 	std::cout << s << "\n";
-  // }
-  // catch (...) {
-  // 	std::cout << "Unknown Exception at "<<__FILE__<<": line
-  // "<<__LINE__ <<
-  // "\n";
-  // }
+  try {
+    _solver.step(_particles, _boundaries, _cell_start_particle,
+                 _cell_start_boundary, _space_size, _cell_size, _cell_length,
+                 _dt, _g, _radius);
+    cudaDeviceSynchronize();
+    CHECK_KERNEL();
+  } catch (const char *s) {
+    std::cout << s << "\n";
+  } catch (...) {
+    std::cout << "Unknown Exception at " << __FILE__ << ": line" << __LINE__
+              << "\n";
+  }
+
+  set_surface_particles(_particles, _cell_start_particle);
 
   // float milliseconds;
   // CUDA_CALL(cudaEventRecord(stop, 0));
@@ -148,4 +144,62 @@ __global__ void computeBoundaryMass_CUDA(float *mass, float3 *pos,
   }
   mass[i] = rhoB / fmaxf(EPSILON, mass[i]);
   return;
+}
+
+__global__ void find_surface(int *buffer_boundary, float3 *pos_granular,
+                             const int num, int *cell_start_granular,
+                             const int3 cell_size, const float cell_length) {
+  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+  if (i >= num)
+    return;
+  __syncthreads();
+
+  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  unsigned int n_neighbors = 0;
+
+  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+    const auto cellID = particlePos2cellIdx(
+        make_int3(pos_granular[i] / cell_length) +
+            make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
+        cell_size);
+    if (cellID == (cell_size.x * cell_size.y * cell_size.z))
+      continue;
+    // calculate centroid of neighbors
+    int j = cell_start_granular[cellID];
+    while (j < cell_start_granular[cellID + 1]) {
+      if (i == j) {
+        j++;
+        continue;
+      }
+      centroid += pos_granular[j];
+      n_neighbors++;
+      j++;
+    }
+  }
+
+  centroid /= (float)n_neighbors;
+
+  float dis =
+      norm3df(pos_granular[i].x - centroid.x, pos_granular[i].y - centroid.y,
+              pos_granular[i].z - centroid.z);
+
+  if (dis > 0.01 || n_neighbors < 5) {
+    buffer_boundary[i] = 1;
+  } else {
+    buffer_boundary[i] = 0;
+  }
+}
+
+void GranularSystem::set_surface_particles(
+    const std::shared_ptr<GranularParticles> &particles,
+    DArray<int> &cell_start) {
+  const int num = particles->size();
+  find_surface<<<(num - 1) / block_size + 1, block_size>>>(
+      _buffer_boundary.addr(), particles->get_pos_ptr(), num,
+      _cell_start_particle.addr(), _cell_size, _cell_length);
+
+  CUDA_CALL(cudaMemcpy(particles->get_surface_ptr(), _buffer_boundary.addr(),
+                       sizeof(int) * particles->size(),
+                       cudaMemcpyDeviceToDevice));
 }

@@ -48,10 +48,14 @@ private:
   const int3 _cell_size;
   /** \brief Device array to hold the cell index of each particle*/
   DArray<int> _buffer_int;
+  DArray<int> _buffer_boundary;
 
   Solver _solver;
 
   void compute_boundary_mass();
   void neighbor_search(const std::shared_ptr<GranularParticles> &particles,
                        DArray<int> &cell_start);
+  void
+  set_surface_particles(const std::shared_ptr<GranularParticles> &particles,
+                        DArray<int> &cell_start);
 };
