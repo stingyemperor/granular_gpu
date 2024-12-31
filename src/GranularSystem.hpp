@@ -8,7 +8,7 @@ public:
   GranularSystem(std::shared_ptr<GranularParticles> &particles,
                  std::shared_ptr<GranularParticles> &boundary_particles,
                  float3 space_size, float cell_length, float dt, float3 g,
-                 int3 cell_size);
+                 int3 cell_size, const int radius);
 
   GranularSystem(const GranularSystem &) = delete;
   GranularSystem &operator=(const GranularSystem &) = delete;
@@ -44,6 +44,7 @@ private:
   const float3 _space_size;
   const float _dt;
   const float3 _g;
+  const int _radius;
   const int3 _cell_size;
   /** \brief Device array to hold the cell index of each particle*/
   DArray<int> _buffer_int;

@@ -14,7 +14,7 @@ GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
     std::shared_ptr<GranularParticles> &boundary_particles,
     const float3 space_size, const float cell_length, const float dt,
-    const float3 g, int3 cell_size)
+    const float3 g, int3 cell_size, const int radius)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)), _solver(_particles),
       _space_size(space_size), _dt(dt), _g(g), _cell_length(cell_length),
@@ -22,21 +22,22 @@ GranularSystem::GranularSystem(
       _cell_start_boundary(cell_size.x * cell_size.y * cell_size.z + 1),
       _cell_size(cell_size),
       _buffer_int(
-          std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)) {
+          std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
+      _radius(radius) {
+  // initalize the boundary_particles
   neighbor_search(_boundaries, _cell_start_boundary);
-  compute_boundary_mass();
-
   // Set the mass of all the particles to 1
   thrust::fill(thrust::device, _particles->get_mass_ptr(),
                _particles->get_mass_ptr() + _particles->size(), 1);
   neighbor_search(_particles, _cell_start_particle);
 
   step();
+  CHECK_KERNEL();
 }
 
 void GranularSystem::neighbor_search(
     const std::shared_ptr<GranularParticles> &particles,
-    DArray<int> &cellStart) {
+    DArray<int> &cell_start) {
   int num = particles->size();
 
   // map the particles to their cell idx
@@ -58,17 +59,17 @@ void GranularSystem::neighbor_search(
 
   // fill cell_start with zeroes
   thrust::fill(
-      thrust::device, cellStart.addr(),
-      cellStart.addr() + _cell_size.x * _cell_size.y * _cell_size.z + 1, 0);
+      thrust::device, cell_start.addr(),
+      cell_start.addr() + _cell_size.x * _cell_size.y * _cell_size.z + 1, 0);
 
   // add number of particles per cell index to cell_start
   countingInCell_CUDA<<<(num - 1) / block_size + 1, block_size>>>(
-      cellStart.addr(), particles->get_particle_2_cell(), num);
+      cell_start.addr(), particles->get_particle_2_cell(), num);
   // calculate the prefix sum of cell_start to help with neighbor search
-  thrust::exclusive_scan(thrust::device, cellStart.addr(),
-                         cellStart.addr() +
+  thrust::exclusive_scan(thrust::device, cell_start.addr(),
+                         cell_start.addr() +
                              _cell_size.x * _cell_size.y * _cell_size.z + 1,
-                         cellStart.addr());
+                         cell_start.addr());
   return;
 }
 
@@ -81,10 +82,10 @@ float GranularSystem::step() {
   neighbor_search(_particles, _cell_start_particle);
   _solver.step(_particles, _boundaries, _cell_start_particle,
                _cell_start_boundary, _space_size, _cell_size, _cell_length, _dt,
-               _g);
+               _g, _radius);
   // try {
-  // 	_solver->step(_fluids, _boundaries, cellStartFluid,
-  // cellStartBoundary, 		_spaceSize, _cellSize, _sphCellLength,
+  // 	_solver->step(_fluids, _boundaries, cell_startFluid,
+  // cell_startBoundary, 		_spaceSize, _cell_size, _sphCellLength,
   // _sphSmoothingRadius, 		_dt, _sphRho0, _sphRhoBoundary,
   // _sphStiff, _sphVisc, _sphG, 		_sphSurfaceTensionIntensity,
   // _sphAirPressure); 	cudaDeviceSynchronize(); CHECK_KERNEL();
@@ -112,6 +113,39 @@ void GranularSystem::compute_boundary_mass() {
   // computeBoundaryMass_CUDA<<<(_boundaries->size() - 1) / block_size + 1,
   //                            block_size>>>(
   //     _boundaries->getMassPtr(), _boundaries->getPosPtr(),
-  //     _boundaries->size(), cellStartBoundary.addr(), _cellSize,
+  //     _boundaries->size(), cell_startBoundary.addr(), _cell_size,
   //     _sphCellLength, _sphRhoBoundary, _sphSmoothingRadius);
+}
+
+__device__ void boundary_kernel(float *sum_kernel, const int i,
+                                const int cell_id, float3 *pos, int *cell_start,
+                                const int3 cell_size, const float radius) {
+  if (cell_id == (cell_size.x * cell_size.y * cell_size.z))
+    return;
+  auto j = cell_start[cell_id];
+  const auto end = cell_start[cell_id + 1];
+  while (j < end) {
+    *sum_kernel += cubic_spline_kernel(length(pos[i] - pos[j]), radius);
+    ++j;
+  }
+  return;
+}
+
+__global__ void computeBoundaryMass_CUDA(float *mass, float3 *pos,
+                                         const int num, int *cell_start,
+                                         const int3 cell_size,
+                                         const float cell_length,
+                                         const float rhoB, const float radius) {
+  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+  if (i >= num)
+    return;
+  const auto cell_pos = make_int3(pos[i] / cell_length);
+#pragma unroll
+  for (auto m = 0; m < 27; ++m) {
+    const auto cellID = particlePos2cellIdx(
+        cell_pos + make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1), cell_size);
+    boundary_kernel(&mass[i], i, cellID, pos, cell_start, cell_size, radius);
+  }
+  mass[i] = rhoB / fmaxf(EPSILON, mass[i]);
+  return;
 }

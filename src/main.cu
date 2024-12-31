@@ -44,7 +44,7 @@ const int3 cell_size = make_int3(ceil(space_size.x / cell_length),
 void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
   std::vector<float3> pos;
-
+  // 36 24 24
   for (auto i = 0; i < 36; ++i) {
     for (auto j = 0; j < 24; ++j) {
       for (auto k = 0; k < 24; ++k) {
@@ -95,9 +95,9 @@ void init_granular_system() {
   }
 
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
-  p_system = std::make_shared<GranularSystem>(granular_particles,
-                                              boundary_particles, space_size,
-                                              cell_length, dt, G, cell_size);
+  p_system = std::make_shared<GranularSystem>(
+      granular_particles, boundary_particles, space_size, cell_length, dt, G,
+      cell_size, smoothing_radius);
 }
 
 void createVBO(GLuint *vbo, const unsigned int length) {
@@ -320,7 +320,10 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
     rot[0] = rot[1] = 0;
     zoom = 0.3f;
     break;
-  case 'n':
+  case 'N':
+    void one_step();
+    one_step();
+    break;
   default:;
   }
 }
