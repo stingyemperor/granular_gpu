@@ -17,6 +17,7 @@ static GLuint m_particles_program;
 static const int m_window_h = 1600;
 static const int m_fov = 30;
 static const float particle_radius = 0.01f;
+static const float density = 238732.4146f;
 
 // view variables
 static float rot[2] = {0.0f, 0.0f};
@@ -97,7 +98,7 @@ void init_granular_system() {
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
   p_system = std::make_shared<GranularSystem>(
       granular_particles, boundary_particles, space_size, cell_length, dt, G,
-      cell_size, smoothing_radius);
+      cell_size, density);
 }
 
 void createVBO(GLuint *vbo, const unsigned int length) {

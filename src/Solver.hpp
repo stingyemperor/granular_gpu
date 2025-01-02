@@ -36,6 +36,7 @@ public:
   void final_update(std::shared_ptr<GranularParticles> &particles, float dt);
 
   void merge(std::shared_ptr<GranularParticles> &particles);
+  void split(std::shared_ptr<GranularParticles> &particles);
 
 private:
   const int _max_iter;

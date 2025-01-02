@@ -15,7 +15,7 @@ GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
     std::shared_ptr<GranularParticles> &boundary_particles,
     const float3 space_size, const float cell_length, const float dt,
-    const float3 g, int3 cell_size, const int radius)
+    const float3 g, int3 cell_size, const int density)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)), _solver(_particles),
       _space_size(space_size), _dt(dt), _g(g), _cell_length(cell_length),
@@ -24,7 +24,7 @@ GranularSystem::GranularSystem(
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _radius(radius), _buffer_boundary(_particles->size()) {
+      _density(density), _buffer_boundary(_particles->size()) {
   // initalize the boundary_particles
   neighbor_search(_boundaries, _cell_start_boundary);
   // Set the mass of all the particles to 1
@@ -83,7 +83,7 @@ float GranularSystem::step() {
   try {
     _solver.step(_particles, _boundaries, _cell_start_particle,
                  _cell_start_boundary, _space_size, _cell_size, _cell_length,
-                 _dt, _g, _radius);
+                 _dt, _g, _density);
     cudaDeviceSynchronize();
     CHECK_KERNEL();
   } catch (const char *s) {
@@ -113,38 +113,41 @@ void GranularSystem::compute_boundary_mass() {
   //     _sphCellLength, _sphRhoBoundary, _sphSmoothingRadius);
 }
 
-__device__ void boundary_kernel(float *sum_kernel, const int i,
-                                const int cell_id, float3 *pos, int *cell_start,
-                                const int3 cell_size, const float radius) {
-  if (cell_id == (cell_size.x * cell_size.y * cell_size.z))
-    return;
-  auto j = cell_start[cell_id];
-  const auto end = cell_start[cell_id + 1];
-  while (j < end) {
-    *sum_kernel += cubic_spline_kernel(length(pos[i] - pos[j]), radius);
-    ++j;
-  }
-  return;
-}
-
-__global__ void computeBoundaryMass_CUDA(float *mass, float3 *pos,
-                                         const int num, int *cell_start,
-                                         const int3 cell_size,
-                                         const float cell_length,
-                                         const float rhoB, const float radius) {
-  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-  if (i >= num)
-    return;
-  const auto cell_pos = make_int3(pos[i] / cell_length);
-#pragma unroll
-  for (auto m = 0; m < 27; ++m) {
-    const auto cellID = particlePos2cellIdx(
-        cell_pos + make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1), cell_size);
-    boundary_kernel(&mass[i], i, cellID, pos, cell_start, cell_size, radius);
-  }
-  mass[i] = rhoB / fmaxf(EPSILON, mass[i]);
-  return;
-}
+// __device__ void boundary_kernel(float *sum_kernel, const int i,
+//                                 const int cell_id, float3 *pos, int
+//                                 *cell_start, const int3 cell_size, const
+//                                 float density) {
+//   if (cell_id == (cell_size.x * cell_size.y * cell_size.z))
+//     return;
+//   auto j = cell_start[cell_id];
+//   const auto end = cell_start[cell_id + 1];
+//   while (j < end) {
+//     *sum_kernel += cubic_spline_kernel(length(pos[i] - pos[j]), radius);
+//     ++j;
+//   }
+//   return;
+// }
+//
+// __global__ void computeBoundaryMass_CUDA(float *mass, float3 *pos,
+//                                          const int num, int *cell_start,
+//                                          const int3 cell_size,
+//                                          const float cell_length,
+//                                          const float rhoB, const float
+//                                          radius) {
+//   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+//   if (i >= num)
+//     return;
+//   const auto cell_pos = make_int3(pos[i] / cell_length);
+// #pragma unroll
+//   for (auto m = 0; m < 27; ++m) {
+//     const auto cellID = particlePos2cellIdx(
+//         cell_pos + make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
+//         cell_size);
+//     boundary_kernel(&mass[i], i, cellID, pos, cell_start, cell_size, radius);
+//   }
+//   mass[i] = rhoB / fmaxf(EPSILON, mass[i]);
+//   return;
+// }
 
 __global__ void find_surface(int *buffer_boundary, float3 *pos_granular,
                              const int num, int *cell_start_granular,

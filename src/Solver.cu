@@ -7,6 +7,8 @@
 #include <thrust/transform.h>
 #include <vector_types.h>
 
+__device__ __constant__ double pi = 3.14159265358979323846;
+
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
   const unsigned int length = _num_constraints.length();
@@ -40,7 +42,7 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
                   const DArray<int> &cell_start_granular,
                   const DArray<int> &cell_start_boundary, float3 space_size,
                   int3 cell_size, float cell_length, float dt, float3 G,
-                  const int radius) {
+                  const int density) {
 
   // apply forces
   // update velocity
@@ -50,12 +52,12 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   // update_neighborhood(particles);
   // project constraints
   project(particles, boundary, cell_start_granular, cell_start_boundary,
-          cell_size, space_size, cell_length, 6, radius);
+          cell_size, space_size, cell_length, 5, density);
 
   final_update(particles, dt);
 }
 
-// NOTE: Seems to cause issues with incorrect neighbors
+// WARNING: Seems to cause issues with incorrect neighbors
 void Solver::update_neighborhood(
     const std::shared_ptr<GranularParticles> &particles) {
 
@@ -152,7 +154,7 @@ void Solver::final_update(std::shared_ptr<GranularParticles> &particles,
 
 __device__ void boundary_constraint(float3 &del_p, int &n, const float3 pos_p,
                                     float3 *pos_b, int j, const int cell_end,
-                                    const int radius) {
+                                    const int density) {
   while (j < cell_end) {
     const float dis = norm3df(pos_p.x - pos_b[j].x, pos_p.y - pos_b[j].y,
                               pos_p.z - pos_b[j].z);
@@ -169,22 +171,33 @@ __device__ void boundary_constraint(float3 &del_p, int &n, const float3 pos_p,
 }
 
 __device__ void particles_constraint(float3 &del_p, int &n, int i,
-                                     float3 *pos_p, int j, const int cell_end,
-                                     const int radius, int *n_constraints,
-                                     float3 *delta_pos) {
+                                     float3 *pos_p, float *m, int j,
+                                     const int cell_end, const int density,
+                                     int *n_constraints, float3 *delta_pos) {
   while (j < cell_end) {
     if (i != j) {
       const float3 p_12 = pos_p[i] - pos_p[j];
+      const float inv_m_i = 1 / m[i];
+      const float inv_m_j = 1 / m[j];
+      const float inv_m_sum = 1.0 / (inv_m_i + inv_m_j);
+      const float r_i = cbrtf((3 * m[i]) / (4 * pi * density));
+      const float r_j = cbrtf((3 * m[j]) / (4 * pi * density));
+      if (i == 0) {
 
+        // printf("m_1 = %f, m_2 = %f\n", inv_m_i, inv_m_j);
+        // printf("r_1 = %f, r_2 = %f\n", r_i, r_j);
+        // printf("mass_sum = %f\n", inv_m_sum);
+      }
       const float dis =
           norm3df(pos_p[i].x - pos_p[j].x, pos_p[i].y - pos_p[j].y,
                   pos_p[i].z - pos_p[j].z);
-      const float mag = dis - 2.0 * 0.01;
+      const float mag = dis - (r_i + r_j);
 
       // TODO: add mass scaling
       if (mag < 0.0) {
-        del_p -= 0.5 * (mag / dis) * p_12;
-        delta_pos[j] += 0.5 * (mag / dis) * p_12;
+        del_p -= inv_m_sum * inv_m_i * (mag / dis) * p_12;
+        delta_pos[j] += inv_m_sum * inv_m_j * (mag / dis) * p_12;
+
         n++;
         n_constraints[j]++;
       }
@@ -200,7 +213,7 @@ __global__ void compute_delta_pos(float3 *delta_pos, int *n,
                                   int *cell_start_granular,
                                   int *cell_start_boundary,
                                   const int3 cell_size, const float cell_length,
-                                  const int radius) {
+                                  const int density) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
@@ -225,10 +238,11 @@ __global__ void compute_delta_pos(float3 *delta_pos, int *n,
     //                          1], radius);
     boundary_constraint(dp, n[i], pos_granular[i], pos_boundary,
                         cell_start_boundary[cellID],
-                        cell_start_boundary[cellID + 1], radius);
+                        cell_start_boundary[cellID + 1], density);
 
-    particles_constraint(dp, n[i], i, pos_granular, cell_start_granular[cellID],
-                         cell_start_granular[cellID + 1], radius, n, delta_pos);
+    particles_constraint(
+        dp, n[i], i, pos_granular, mass_granular, cell_start_granular[cellID],
+        cell_start_granular[cellID + 1], density, n, delta_pos);
   }
 
   delta_pos[i] = dp;
@@ -253,7 +267,7 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
                      const DArray<int> &cell_start_granular,
                      const DArray<int> &cell_start_boundary, int3 cell_size,
                      float3 space_size, float cell_length, int max_iter,
-                     const int radius) {
+                     const int density) {
 
   int iter = 0;
   const float3 zero = make_float3(0.0f, 0.0f, 0.0f);
@@ -277,7 +291,7 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
         _buffer_float3.addr(), _num_constraints.addr(), _pos_t.addr(),
         boundaries->get_pos_ptr(), particles->get_mass_ptr(), num,
         cell_start_granular.addr(), cell_start_boundary.addr(), cell_size,
-        cell_length, radius);
+        cell_length, density);
     //
     auto begin = thrust::make_zip_iterator(thrust::make_tuple(
         _buffer_float3.addr(), _num_constraints.addr(), _pos_t.addr()));
@@ -294,3 +308,5 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
     iter++;
   }
 }
+
+void Solver::merge(std::shared_ptr<GranularParticles> &particles) {}
