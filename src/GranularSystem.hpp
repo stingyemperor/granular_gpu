@@ -45,6 +45,8 @@ private:
   const float _dt;
   const float3 _g;
   const int _density;
+  const int _max_mass;
+  const int _min_mass;
   const int3 _cell_size;
   /** \brief Device array to hold the cell index of each particle*/
   DArray<int> _buffer_int;

@@ -2,8 +2,14 @@
 #include "Global.hpp"
 #include "Solver.hpp"
 #include "helper_math.h"
+#include <algorithm>
+#include <cstdio>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
 #include <thrust/device_ptr.h>
+#include <thrust/device_vector.h>
 #include <thrust/fill.h>
+#include <thrust/host_vector.h>
 #include <thrust/transform.h>
 #include <vector_types.h>
 
@@ -44,6 +50,7 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
                   int3 cell_size, float cell_length, float dt, float3 G,
                   const int density) {
 
+  _buffer_int.resize(particles->size());
   // apply forces
   // update velocity
   add_external_force(particles, dt, G);
@@ -53,6 +60,8 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   // project constraints
   project(particles, boundary, cell_start_granular, cell_start_boundary,
           cell_size, space_size, cell_length, 5, density);
+
+  // TODO: resize remaning stuff
 
   final_update(particles, dt);
 }
@@ -309,4 +318,143 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
   }
 }
 
-void Solver::merge(std::shared_ptr<GranularParticles> &particles) {}
+__device__ void viable_merge(const int i, int j, const int cell_end,
+                             const float *m, const int *surface,
+                             const int *remove, const float max_mass, int &n,
+                             int *n_indices) {
+  while (j < cell_end) {
+    if (i != j) {
+      const bool mass_check = m[j] == max_mass;
+      // Only add as viable neighbor if:
+      // 1. Not a surface particle
+      // 2. Not already marked for removal
+      // 3. Not at max mass
+      if (!(surface[j] == 1 || remove[j] == 1 || mass_check)) {
+        if (n < 100) { // Bounds check
+          n_indices[n] = j;
+          atomicAdd(&n, 1);
+        }
+      }
+    }
+    ++j;
+  }
+}
+
+__global__ void merge_gpu(const int num, float3 *pos_granular,
+                          float *mass_granular, int *surface, int *remove,
+                          int *cell_start_granular, float max_mass,
+                          const int3 cell_size, const float cell_length) {
+  // store the indices of viable neighbors
+  int neighbor_indices[100]; // Consider making this dynamic if needed
+
+  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+  // Bounds check
+  if (i >= num)
+    return;
+
+  // if the particle is not a surface particle
+  if (surface[i] == 0) {
+    int n = 0;
+    remove[i] = 1; // Mark for removal initially
+
+    __syncthreads();
+
+#pragma unroll
+    // Loop through the 27 neighboring cells
+    for (auto m = 0; m < 27; __syncthreads(), ++m) {
+      const auto cellID = particlePos2cellIdx(
+          make_int3(pos_granular[i] / cell_length) +
+              make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
+          cell_size);
+
+      if (cellID == (cell_size.x * cell_size.y * cell_size.z))
+        continue;
+
+      // Add atomicMax to track array bounds
+      int maxNeighbors = atomicMax(&n, n);
+      if (maxNeighbors >= 100) {
+        printf("Warning: Neighbor array overflow at particle %d\n", i);
+        continue;
+      }
+
+      // get the number and indices of viable neighbors
+      viable_merge(i, cell_start_granular[cellID],
+                   cell_start_granular[cellID + 1], mass_granular, surface,
+                   remove, max_mass, n, neighbor_indices);
+    }
+
+    // no viable neighbors
+    if (n == 0) {
+      remove[i] = 0; // Keep the particle
+    } else {
+      // Redistribute mass to neighbors
+      float new_mass = mass_granular[i] / n;
+      for (int m = 0; m < n && m < 100; m++) {
+        int neighborIdx = neighbor_indices[m];
+        if (neighborIdx >= 0 && neighborIdx < num) {
+          atomicAdd(&mass_granular[neighborIdx], new_mass);
+        }
+      }
+    }
+  } else {
+    remove[i] = 0; // Don't remove surface particles
+  }
+}
+
+void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
+                               const DArray<int> &cell_start_granular,
+                               const float max_mass, int3 cell_size,
+                               float3 space_size, float cell_length) {
+  const int num = particles->size();
+
+  // Zero out removal buffer before merge
+  thrust::fill(thrust::device, _buffer_remove.addr(),
+               _buffer_remove.addr() + num, 0);
+
+  // Add debug prints
+  std::vector<int> debug_buffer(num);
+  cudaMemcpy(debug_buffer.data(), _buffer_remove.addr(), sizeof(int) * num,
+             cudaMemcpyDeviceToHost);
+  std::cout << "Pre-merge buffer state: ";
+  for (int i = 0; i < std::min(10, num); i++) {
+    std::cout << debug_buffer[i] << " ";
+  }
+  std::cout << std::endl;
+
+  // Run merge kernel
+  merge_gpu<<<(num - 1) / block_size + 1, block_size>>>(
+      num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+      particles->get_surface_ptr(), _buffer_remove.addr(),
+      cell_start_granular.addr(), max_mass, cell_size, cell_length);
+
+  // Verify kernel execution
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    std::cerr << "Merge kernel error: " << cudaGetErrorString(err) << std::endl;
+    return;
+  }
+
+  // Debug print after merge
+  cudaMemcpy(debug_buffer.data(), _buffer_remove.addr(), sizeof(int) * num,
+             cudaMemcpyDeviceToHost);
+  std::cout << "Post-merge buffer state: ";
+  for (int i = 0; i < std::min(10, num); i++) {
+    std::cout << debug_buffer[i] << " ";
+  }
+  std::cout << std::endl;
+
+  // Debug print number of particles to remove
+  int remove_count = std::count(debug_buffer.begin(), debug_buffer.end(), 1);
+  std::cout << "Particles marked for removal: " << remove_count << " out of "
+            << num << std::endl;
+
+  // Synchronize before compact
+  cudaDeviceSynchronize();
+
+  try {
+    particles->remove_elements(_buffer_remove);
+  } catch (const std::exception &e) {
+    std::cerr << "Error during remove_elements: " << e.what() << std::endl;
+  }
+}

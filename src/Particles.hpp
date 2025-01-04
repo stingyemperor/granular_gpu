@@ -1,6 +1,7 @@
 #pragma once
 #include "DArray.hpp"
 #include "Global.hpp"
+#include <thrust/device_vector.h>
 #include <vector>
 
 class Particles {
@@ -19,9 +20,16 @@ public:
   float3 *get_vel_ptr() const { return _vel.addr(); }
   const DArray<float3> &get_pos() const { return _pos; }
 
+  void remove_elements(const DArray<int> &removal_flags) {
+    _pos.compact(removal_flags);
+    _vel.compact(removal_flags);
+  }
+
   virtual ~Particles() noexcept {}
 
-protected:
+public:
   DArray<float3> _pos;
   DArray<float3> _vel;
+  thrust::device_vector<float3> _position;
+  thrust::device_vector<float3> _velocity;
 };

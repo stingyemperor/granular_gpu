@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 project(
   "granular_gpu"
   VERSION "0.1.0"
@@ -8,8 +7,6 @@ project(
 
 # Find the CUDA Toolkit
 find_package(CUDAToolkit REQUIRED)
-
-# Find OpenGL, GLEW, and GLUT
 find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(GLUT REQUIRED)
@@ -17,7 +14,7 @@ find_package(GLUT REQUIRED)
 # Set the source directory
 set(SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")
 
-# Recursively find all .cpp and .cu files in the src directory
+# Recursively find all source files
 file(
   GLOB_RECURSE
   SOURCE_FILES
@@ -27,29 +24,42 @@ file(
   "${SOURCE_DIR}/*.cu"
   "${SOURCE_DIR}/*.h")
 
-# Create an executable target from all source files
+# Create executable target
 add_executable(main ${SOURCE_FILES})
 
-# Include directories for CUDA, GLEW, GLUT, and OpenGL
+# Include directories
 target_include_directories(
   main PRIVATE ${CUDAToolkit_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS}
                ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR})
 
-# Link against CUDA runtime, GLEW, GLUT, and OpenGL libraries
+# Link libraries
 target_link_libraries(
-  main PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES} OpenGL::GL
-               GLU # Add GLU library
+  main PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES} OpenGL::GL GLU
 )
 
-# Set CUDA-specific compilation flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall ")
+# CUDA compilation flags
+# Note the addition of --extended-lambda flag
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall --extended-lambda")
+
+# Enable C++17 for both host and device code
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --std=c++17")
+
+# Other CUDA flags
 set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} --no-cuda-version-check")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-warning-option")
-# Add a conditional option to avoid passing it to clang
 set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -forward-unknown-to-host-compiler")
+
+# CUDA standards and architectures
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
+
+# Find Thrust (usually comes with CUDA)
+find_package(Thrust REQUIRED CONFIG)
+thrust_create_target(Thrust)
+
+# Link Thrust to our target
+target_link_libraries(main PRIVATE Thrust)
 
 # Debug messages
 message(STATUS "CMAKE_CUDA_COMPILER_VERSION: ${CMAKE_CUDA_COMPILER_VERSION}")

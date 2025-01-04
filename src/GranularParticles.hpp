@@ -18,6 +18,13 @@ public:
   float *get_mass_ptr() const { return _mass.addr(); }
   int *get_surface_ptr() const { return _surface.addr(); }
 
+  void remove_elements(const DArray<int> &removal_flags) {
+    _mass.compact(removal_flags);
+    _surface.compact(removal_flags);
+    _particle_2_cell.compact(removal_flags);
+
+    Particles::remove_elements(removal_flags);
+  }
   virtual ~GranularParticles() noexcept {}
 
 protected:

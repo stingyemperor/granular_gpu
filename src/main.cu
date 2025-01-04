@@ -18,6 +18,8 @@ static const int m_window_h = 1600;
 static const int m_fov = 30;
 static const float particle_radius = 0.01f;
 static const float density = 238732.4146f;
+static size_t last_particle_count =
+    0; // Add this to track particle count changes
 
 // view variables
 static float rot[2] = {0.0f, 0.0f};
@@ -101,26 +103,79 @@ void init_granular_system() {
       cell_size, density);
 }
 
-void createVBO(GLuint *vbo, const unsigned int length) {
-  // create buffer object
-  glGenBuffers(1, vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+void resizeVBO(GLuint *vbo, size_t new_size) {
+  // Unregister old VBO from CUDA
+  CUDA_CALL(cudaGLUnregisterBufferObject(*vbo));
 
-  // initialize buffer object
-  glBufferData(GL_ARRAY_BUFFER, length, nullptr, GL_DYNAMIC_DRAW);
+  // Delete old VBO
+  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+  glBufferData(GL_ARRAY_BUFFER, new_size * sizeof(float3), nullptr,
+               GL_DYNAMIC_DRAW);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-  // register buffer object with CUDA
+  // Re-register with CUDA
   CUDA_CALL(cudaGLRegisterBufferObject(*vbo));
 }
 
+void createVBO(GLuint *vbo, const unsigned int size) {
+  // Check if VBO already exists
+  if (*vbo != 0) {
+    // Unregister from CUDA if needed
+    cudaError_t err = cudaGLUnregisterBufferObject(*vbo);
+    if (err != cudaSuccess && err != cudaErrorInvalidResourceHandle) {
+      std::cerr << "CUDA unregister error: " << cudaGetErrorString(err)
+                << std::endl;
+    }
+
+    // Delete existing VBO
+    glDeleteBuffers(1, vbo);
+  }
+
+  // create buffer object
+  glGenBuffers(1, vbo);
+  if (*vbo == 0) {
+    throw std::runtime_error("Failed to create VBO");
+  }
+
+  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+  glBufferData(GL_ARRAY_BUFFER, size * sizeof(float3), nullptr,
+               GL_DYNAMIC_DRAW);
+
+  // Check for OpenGL errors
+  GLenum gl_error = glGetError();
+  if (gl_error != GL_NO_ERROR) {
+    std::cerr << "OpenGL error in createVBO: " << gl_error << std::endl;
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    throw std::runtime_error("OpenGL error in createVBO");
+  }
+
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+  // register buffer object with CUDA
+  cudaError_t cuda_err = cudaGLRegisterBufferObject(*vbo);
+  if (cuda_err != cudaSuccess) {
+    std::cerr << "CUDA register error: " << cudaGetErrorString(cuda_err)
+              << std::endl;
+    throw std::runtime_error("Failed to register VBO with CUDA");
+  }
+}
+
 void deleteVBO(GLuint *vbo) {
-  glBindBuffer(1, *vbo);
+  if (*vbo == 0)
+    return;
+
+  // Unregister from CUDA
+  cudaError_t err = cudaGLUnregisterBufferObject(*vbo);
+  if (err != cudaSuccess && err != cudaErrorInvalidResourceHandle) {
+    std::cerr << "CUDA unregister error: " << cudaGetErrorString(err)
+              << std::endl;
+  }
+
+  // Delete buffer
+  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
   glDeleteBuffers(1, vbo);
 
-  CUDA_CALL(cudaGLUnregisterBufferObject(*vbo));
-
-  *vbo = NULL;
+  *vbo = 0;
 }
 
 void onClose(void) {
@@ -181,17 +236,54 @@ generate_dots(float3 *dot, float3 *color,
               const std::shared_ptr<GranularParticles> particles, int *surface);
 
 void renderParticles(void) {
+  size_t current_particle_count = p_system->size();
+
+  // Check if particle count has changed
+  if (current_particle_count != last_particle_count) {
+    std::cout << "Particle count changed from " << last_particle_count << " to "
+              << current_particle_count << std::endl;
+
+    try {
+      // Resize VBOs if needed
+      resizeVBO(&particlesVBO, current_particle_count);
+      resizeVBO(&particlesColorVBO, current_particle_count);
+      last_particle_count = current_particle_count;
+    } catch (const std::exception &e) {
+      std::cerr << "Error resizing VBOs: " << e.what() << std::endl;
+      return;
+    }
+  }
+
   // map OpenGL buffer object for writing from CUDA
   float3 *dptr;
   float3 *cptr;
-  CUDA_CALL(cudaGLMapBufferObject((void **)&dptr, particlesVBO));
-  CUDA_CALL(cudaGLMapBufferObject((void **)&cptr, particlesColorVBO));
 
-  // calculate the dots' position and color
-  generate_dots(dptr, cptr, p_system->get_particles(),
-                p_system->get_particles()->get_surface_ptr());
+  cudaError_t err;
 
-  // unmap buffer object
+  err = cudaGLMapBufferObject((void **)&dptr, particlesVBO);
+  if (err != cudaSuccess) {
+    std::cerr << "Error mapping position VBO: " << cudaGetErrorString(err)
+              << std::endl;
+    return;
+  }
+
+  err = cudaGLMapBufferObject((void **)&cptr, particlesColorVBO);
+  if (err != cudaSuccess) {
+    cudaGLUnmapBufferObject(particlesVBO); // Clean up first buffer
+    std::cerr << "Error mapping color VBO: " << cudaGetErrorString(err)
+              << std::endl;
+    return;
+  }
+
+  try {
+    // calculate the dots' position and color
+    generate_dots(dptr, cptr, p_system->get_particles(),
+                  p_system->get_particles()->get_surface_ptr());
+  } catch (const std::exception &e) {
+    std::cerr << "Error in generate_dots: " << e.what() << std::endl;
+  }
+
+  // unmap buffer objects
   CUDA_CALL(cudaGLUnmapBufferObject(particlesVBO));
   CUDA_CALL(cudaGLUnmapBufferObject(particlesColorVBO));
 
@@ -203,11 +295,10 @@ void renderParticles(void) {
   glColorPointer(3, GL_FLOAT, 0, nullptr);
   glEnableClientState(GL_COLOR_ARRAY);
 
-  glDrawArrays(GL_POINTS, 0, p_system->size());
+  glDrawArrays(GL_POINTS, 0, current_particle_count);
 
   glDisableClientState(GL_VERTEX_ARRAY);
   glDisableClientState(GL_COLOR_ARRAY);
-  return;
 }
 
 // TODO: add step
@@ -247,6 +338,32 @@ static void displayFunc(void) {
   glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+  // First draw text
+  glDisable(GL_DEPTH_TEST);
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix(); // Save current projection matrix
+  glLoadIdentity();
+  glOrtho(0, glutGet(GLUT_WINDOW_WIDTH), 0, glutGet(GLUT_WINDOW_HEIGHT), -1, 1);
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix(); // Save current modelview matrix
+  glLoadIdentity();
+
+  glColor3f(0.0f, 0.0f, 0.0f);
+  glRasterPos2i(50, 50);
+  char text[50];
+  snprintf(text, sizeof(text), "Particles: %d", p_system->size());
+  for (char *c = text; *c != '\0'; c++) {
+    glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *c); // Larger font
+  }
+
+  // Restore matrices for 3D rendering
+  glPopMatrix();
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(GL_MODELVIEW);
+  glEnable(GL_DEPTH_TEST);
+
+  // Then continue with your 3D rendering code
   // ----------------------------------------------------------------
   // We DO NOT reset the projection matrix here anymore!
   // The reshape() callback now handles the correct aspect ratio.

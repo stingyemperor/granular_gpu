@@ -16,5 +16,14 @@
         "problemMatcher": ["$gcc"],
         "detail": "Generated task by GitHub Copilot"
       }
-    ]
+    ],
+    "configurations": [
+    {
+      "name": "CUDA C++: Launch",
+      "type": "cuda-gdb",
+      "request": "launch",
+      "program": "/home/bliss/Documents/gpu_projects/granular_gpu/build/main"
+    }
+    ],
+
   }
