@@ -324,41 +324,29 @@ __device__ void viable_merge(const int i, int j, const int cell_end,
                              int *n_indices) {
   while (j < cell_end) {
     if (i != j) {
-      const bool mass_check = m[j] == max_mass;
-      // Only add as viable neighbor if:
-      // 1. Not a surface particle
-      // 2. Not already marked for removal
-      // 3. Not at max mass
-      if (!(surface[j] == 1 || remove[j] == 1 || mass_check)) {
-        if (n < 100) { // Bounds check
-          n_indices[n] = j;
-          atomicAdd(&n, 1);
-        }
+      if (remove[j] == 1) {
+        n++;
       }
     }
     ++j;
   }
 }
 
-__global__ void merge_gpu(const int num, float3 *pos_granular,
-                          float *mass_granular, int *surface, int *remove,
-                          int *cell_start_granular, float max_mass,
-                          const int3 cell_size, const float cell_length) {
-  // store the indices of viable neighbors
-  int neighbor_indices[100]; // Consider making this dynamic if needed
+__global__ void merge_mark_gpu(const int num, float3 *pos_granular,
+                               float *mass_granular, int *surface, int *remove,
+                               float *merge, int *cell_start_granular,
+                               float max_mass, const int3 cell_size,
+                               const float cell_length) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-
   // Bounds check
   if (i >= num)
     return;
 
-  // if the particle is not a surface particle
-  if (surface[i] == 0) {
-    int n = 0;
-    remove[i] = 1; // Mark for removal initially
-
-    __syncthreads();
+  if (surface[i] == 0 &&
+      atomicOr(&remove[i], 0) == 0) { // Only process if not already marked
+    float closest_dis = 1000.0f;
+    int closest_index = -1;
 
 #pragma unroll
     // Loop through the 27 neighboring cells
@@ -367,94 +355,128 @@ __global__ void merge_gpu(const int num, float3 *pos_granular,
           make_int3(pos_granular[i] / cell_length) +
               make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
           cell_size);
-
       if (cellID == (cell_size.x * cell_size.y * cell_size.z))
         continue;
 
-      // Add atomicMax to track array bounds
-      int maxNeighbors = atomicMax(&n, n);
-      if (maxNeighbors >= 100) {
-        printf("Warning: Neighbor array overflow at particle %d\n", i);
-        continue;
-      }
-
-      // get the number and indices of viable neighbors
-      viable_merge(i, cell_start_granular[cellID],
-                   cell_start_granular[cellID + 1], mass_granular, surface,
-                   remove, max_mass, n, neighbor_indices);
-    }
-
-    // no viable neighbors
-    if (n == 0) {
-      remove[i] = 0; // Keep the particle
-    } else {
-      // Redistribute mass to neighbors
-      float new_mass = mass_granular[i] / n;
-      for (int m = 0; m < n && m < 100; m++) {
-        int neighborIdx = neighbor_indices[m];
-        if (neighborIdx >= 0 && neighborIdx < num) {
-          atomicAdd(&mass_granular[neighborIdx], new_mass);
+      int j = cell_start_granular[cellID];
+      while (j < cell_start_granular[cellID + 1] &&
+             j < num) { // Added num bound check
+        if (j == i || atomicOr(&remove[j], 0) == 1 ||
+            atomicOr(&remove[j], 0) == 1) {
+          j++;
+          continue;
         }
+
+        const bool mass_check = mass_granular[j] <= max_mass - mass_granular[i];
+
+        if (!mass_check) {
+          j++;
+          continue;
+        }
+
+        const float3 p_i = pos_granular[i];
+        const float3 p_j = pos_granular[j];
+
+        const float dis =
+            norm3df((p_i.x - p_j.x), (p_i.y - p_j.y), (p_i.z - p_j.z));
+
+        if (dis < closest_dis) {
+          closest_dis = dis;
+          closest_index = j;
+        }
+        j++;
       }
     }
-  } else {
-    remove[i] = 0; // Don't remove surface particles
+
+    if (closest_index == -1) {
+      return;
+    }
+
+    // Try to atomically acquire the merge lock
+    if (atomicCAS(&remove[closest_index], 0, -1) == 0) {
+      atomicExch(&remove[i], 1);
+      atomicExch(&merge[i], closest_index);
+      merge[closest_index] = mass_granular[i];
+    }
   }
 }
 
+__global__ void split_gpu(const int num, float3 *pos_granular,
+                          float *mass_granular, int *surface, int *remove,
+                          float *merge, int *cell_start_granular,
+                          float min_mass, const int3 cell_size,
+                          const float cell_length) {
+
+  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+  if (i >= num)
+    return;
+
+  if (surface[i] == 1) {
+    if (mass_granular[i] >= 2 * min_mass) {
+      // split
+    }
+  }
+
+  return;
+}
+
+struct merge_functor {
+
+  merge_functor() {}
+
+  __host__ __device__ float3
+  operator()(const thrust::tuple<float, float> &t) const {
+    const float &mass = thrust::get<0>(t);
+  }
+};
+
+// Host function
 void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
                                const DArray<int> &cell_start_granular,
                                const float max_mass, int3 cell_size,
                                float3 space_size, float cell_length) {
   const int num = particles->size();
+  if (num == 0)
+    return;
 
-  // Zero out removal buffer before merge
+  // Ensure buffers are properly sized
+  _buffer_remove.resize(num);
+  _buffer_merge.resize(num);
+
+  // Zero out all buffers
   thrust::fill(thrust::device, _buffer_remove.addr(),
                _buffer_remove.addr() + num, 0);
+  thrust::fill(thrust::device, _buffer_merge.addr(), _buffer_merge.addr() + num,
+               0);
 
-  // Add debug prints
-  std::vector<int> debug_buffer(num);
-  cudaMemcpy(debug_buffer.data(), _buffer_remove.addr(), sizeof(int) * num,
-             cudaMemcpyDeviceToHost);
-  std::cout << "Pre-merge buffer state: ";
-  for (int i = 0; i < std::min(10, num); i++) {
-    std::cout << debug_buffer[i] << " ";
-  }
-  std::cout << std::endl;
-
-  // Run merge kernel
-  merge_gpu<<<(num - 1) / block_size + 1, block_size>>>(
-      num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-      particles->get_surface_ptr(), _buffer_remove.addr(),
-      cell_start_granular.addr(), max_mass, cell_size, cell_length);
-
-  // Verify kernel execution
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    std::cerr << "Merge kernel error: " << cudaGetErrorString(err) << std::endl;
-    return;
-  }
-
-  // Debug print after merge
-  cudaMemcpy(debug_buffer.data(), _buffer_remove.addr(), sizeof(int) * num,
-             cudaMemcpyDeviceToHost);
-  std::cout << "Post-merge buffer state: ";
-  for (int i = 0; i < std::min(10, num); i++) {
-    std::cout << debug_buffer[i] << " ";
-  }
-  std::cout << std::endl;
-
-  // Debug print number of particles to remove
-  int remove_count = std::count(debug_buffer.begin(), debug_buffer.end(), 1);
-  std::cout << "Particles marked for removal: " << remove_count << " out of "
-            << num << std::endl;
-
-  // Synchronize before compact
   cudaDeviceSynchronize();
 
+  // Run merge kernel
   try {
+    merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+        particles->get_surface_ptr(), _buffer_remove.addr(),
+        _buffer_merge.addr(), cell_start_granular.addr(), max_mass, cell_size,
+        cell_length);
+
+    cudaDeviceSynchronize();
+
+    // Check for kernel errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+      throw std::runtime_error(std::string("Merge kernel error: ") +
+                               cudaGetErrorString(err));
+    }
+
+    thrust::transform(thrust::device, particles->get_mass_ptr(),
+                      particles->get_mass_ptr() + num, _buffer_merge.addr(),
+                      particles->get_mass_ptr(), thrust::plus<float>());
+
+    // Remove marked elements
     particles->remove_elements(_buffer_remove);
+
   } catch (const std::exception &e) {
-    std::cerr << "Error during remove_elements: " << e.what() << std::endl;
+    std::cerr << "Error in adaptive_sampling: " << e.what() << std::endl;
+    return;
   }
 }

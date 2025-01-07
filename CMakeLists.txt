@@ -39,6 +39,9 @@ target_link_libraries(
 
 # CUDA compilation flags
 # Note the addition of --extended-lambda flag
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
+set(CMAKE_CUDA_FLAGS_DEBUG "-g -G")
+
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall --extended-lambda")
 
 # Enable C++17 for both host and device code

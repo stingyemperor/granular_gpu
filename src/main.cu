@@ -301,7 +301,6 @@ void renderParticles(void) {
   glDisableClientState(GL_COLOR_ARRAY);
 }
 
-// TODO: add step
 void one_step() {
   ++frameId;
   p_system->step();

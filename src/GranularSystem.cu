@@ -4,6 +4,7 @@
 #include "GranularSystem.hpp"
 #include <algorithm>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include <memory>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
@@ -51,8 +52,8 @@ void GranularSystem::neighbor_search(
   // Verify memory state
   size_t free_mem, total_mem;
   cudaMemGetInfo(&free_mem, &total_mem);
-  std::cout << "GPU Memory - Free: " << free_mem / 1024 / 1024
-            << "MB, Total: " << total_mem / 1024 / 1024 << "MB" << std::endl;
+  // std::cout << "GPU Memory - Free: " << free_mem / 1024 / 1024
+  //           << "MB, Total: " << total_mem / 1024 / 1024 << "MB" << std::endl;
 
   // Debug sync point before kernel launch
   cudaError_t err = cudaDeviceSynchronize();
@@ -82,14 +83,14 @@ void GranularSystem::neighbor_search(
   }
 
   // Add debug prints for particle_2_cell content
-  std::vector<int> debug_cells(num);
-  cudaMemcpy(debug_cells.data(), particles->get_particle_2_cell(),
-             sizeof(int) * num, cudaMemcpyDeviceToHost);
-  std::cout << "First few cell indices: ";
-  for (int i = 0; i < std::min(10, num); i++) {
-    std::cout << debug_cells[i] << " ";
-  }
-  std::cout << std::endl;
+  // std::vector<int> debug_cells(num);
+  // cudaMemcpy(debug_cells.data(), particles->get_particle_2_cell(),
+  //            sizeof(int) * num, cudaMemcpyDeviceToHost);
+  // std::cout << "First few cell indices: ";
+  // for (int i = 0; i < std::min(10, num); i++) {
+  //   std::cout << debug_cells[i] << " ";
+  // }
+  // std::cout << std::endl;
 
   // copy the cell indexes to _buffer_int with error checking
   try {
@@ -167,7 +168,7 @@ void GranularSystem::neighbor_search(
     throw std::runtime_error("CUDA sync error at end of neighbor_search");
   }
 
-  std::cout << "Finished neighbor search successfully" << std::endl;
+  // std::cout << "Finished neighbor search successfully" << std::endl;
 }
 
 float GranularSystem::step() {
@@ -185,8 +186,10 @@ float GranularSystem::step() {
     CHECK_KERNEL();
     set_surface_particles(_particles, _cell_start_particle);
 
-    // _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
-    //                           _cell_size, _space_size, _cell_length);
+    cudaDeviceSynchronize();
+
+    _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
+                              _cell_size, _space_size, _cell_length);
 
   } catch (const char *s) {
     std::cout << s << "\n";

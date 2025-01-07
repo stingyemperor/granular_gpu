@@ -12,7 +12,9 @@ public:
       : _max_iter(5), _buffer_int(particles->size()),
         _buffer_float(particles->size()), _buffer_float3(particles->size()),
         _pos_t(particles->size()), _num_constraints(particles->size()),
-        _buffer_remove(particles->size()), _buffer_split(particles->size()) {}
+        _buffer_remove(particles->size()), _buffer_split(particles->size()),
+        _buffer_merge(particles->size()) {}
+
   void step(std::shared_ptr<GranularParticles> &paticles,
             const std::shared_ptr<GranularParticles> &boundary,
             const DArray<int> &cell_start_particle,
@@ -50,4 +52,5 @@ private:
   DArray<int> _num_constraints;
   DArray<int> _buffer_remove;
   DArray<int> _buffer_split;
+  DArray<float> _buffer_merge;
 };
