@@ -9,11 +9,12 @@
 class Solver {
 public:
   Solver(const std::shared_ptr<GranularParticles> &particles)
-      : _max_iter(5), _buffer_int(particles->size()),
+      : _max_iter(5), _blend_factor(4), _buffer_int(particles->size()),
         _buffer_float(particles->size()), _buffer_float3(particles->size()),
         _pos_t(particles->size()), _num_constraints(particles->size()),
         _buffer_remove(particles->size()), _buffer_split(particles->size()),
-        _buffer_merge(particles->size()) {}
+        _buffer_merge(particles->size()),
+        _buffer_merge_count(particles->size()) {}
 
   void step(std::shared_ptr<GranularParticles> &paticles,
             const std::shared_ptr<GranularParticles> &boundary,
@@ -44,8 +45,19 @@ public:
                          const float density);
   void split(std::shared_ptr<GranularParticles> &particles);
 
+  int *get_buffer_merge_count_ptr() const { return _buffer_merge_count.addr(); }
+  float *get_buffer_merge_ptr() const { return _buffer_merge.addr(); }
+  int *get_buffer_remove_ptr() const { return _buffer_remove.addr(); }
+
+  void resize(const int size) {
+    _buffer_merge_count.resize(size);
+    _buffer_merge.resize(size);
+    _buffer_remove.resize(size);
+  }
+
 private:
   const int _max_iter;
+  const int _blend_factor;
   DArray<int> _buffer_int;
   DArray<float> _buffer_float;
   DArray<float3> _buffer_float3;
@@ -54,4 +66,5 @@ private:
   DArray<int> _buffer_remove;
   DArray<int> _buffer_split;
   DArray<float> _buffer_merge;
+  DArray<int> _buffer_merge_count;
 };

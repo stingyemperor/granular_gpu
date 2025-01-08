@@ -18,6 +18,7 @@
 #include <vector_types.h>
 
 __device__ __constant__ double pi = 3.14159265358979323846;
+#define EPSILON 1e-6f // Small threshold for comparison
 
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
@@ -416,8 +417,7 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
   if (i >= num)
     return;
 
-  if (surface[i] == 0 &&
-      atomicOr(&remove[i], 0) == 0) { // Only process if not already marked
+  if (surface[i] == 0 && atomicOr(&remove[i], 0) == 0) {
     float closest_dis = 1000.0f;
     int closest_index = -1;
 
@@ -466,13 +466,14 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
     // we did not find  a viable candidate
     if (closest_index != -1) {
 
+      // NOTE: We mark it to be merged and not removed for gradual merging
       atomicExch(&remove[i], 1);
       atomicExch(&remove[closest_index], -1);
       // printf("reached\n");
       // merge[closest_index] = mass_granular[i];
       atomicExch(&merge[closest_index], mass_granular[i]);
+      // atomicExch(&merge[i], -mass_granular[i]);
 
-      printf("mass at %i is %f\n", closest_index, merge[closest_index]);
       return;
     }
 
@@ -486,6 +487,31 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
   }
 }
 
+__device__ bool isAlmostZero(float x) {
+  return fabsf(x) < EPSILON; // fabsf for single precision
+}
+
+__global__ void merge_count_gpu(const int num, float *mass_del,
+                                float *mass_granular, int *merge_count,
+                                int *remove, const int blend_factor) {
+
+  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+  merge_count[i]++;
+  mass_granular[i] += mass_del[i] / blend_factor;
+
+  if (merge_count[i] == blend_factor && isAlmostZero(mass_granular[i])) {
+    remove[i] = 1;
+    merge_count[i] = 0;
+    mass_del[i] = 0;
+  } else if (merge_count[i] == blend_factor &&
+             !isAlmostZero(mass_granular[i])) {
+
+    remove[i] = 0;
+    merge_count[i] = 0;
+    mass_del[i] = 0;
+  }
+}
+
 __global__ void split_gpu(const int num, float3 *pos_granular,
                           float *mass_granular, float3 *vel_granular,
                           int *surface, int *remove, float *merge,
@@ -495,7 +521,8 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
                           int &split_count, float density) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-  if (i >= num)
+  // Merging/removing particles cannot split
+  if (i >= num || atomicOr(&remove[i], 0) != 0)
     return;
 
   if (surface[i] == 1) {
@@ -526,7 +553,6 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
       // split
     }
   }
-
   return;
 }
 
@@ -602,6 +628,11 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
                       particles->get_mass_ptr() + num, _buffer_merge.addr(),
                       particles->get_mass_ptr(), thrust::plus<float>());
 
+    // merge_count_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+    //     num, _buffer_merge.addr(), particles->get_mass_ptr(),
+    //     _buffer_merge_count.addr(), _buffer_remove.addr(), _blend_factor);
+
+    cudaDeviceSynchronize();
     // print_mass(_buffer_merge);
     // print_darray_int(_buffer_remove);
 
@@ -614,8 +645,16 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     // Remove marked elements
     int old_count = particles->size();
 
+    // remove elements
     particles->remove_elements(_buffer_remove);
+    // _buffer_merge_count.compact(_buffer_remove);
+    // _buffer_merge.compact(_buffer_remove);
+    // _buffer_remove.compact(_buffer_remove);
+
     particles->add_elements(split_mass, split_pos, split_vel, n_split);
+    // _buffer_merge_count.resize(particles->size());
+    // _buffer_merge.resize(particles->size());
+    // _buffer_remove.resize(particles->size());
 
     cudaDeviceSynchronize();
 

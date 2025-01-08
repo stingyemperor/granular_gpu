@@ -127,6 +127,27 @@ void GranularSystem::neighbor_search(
     throw;
   }
 
+  // sort solver buffers based on the keys
+  try {
+
+    _solver.resize(particles->size());
+
+    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
+                        _buffer_int.addr() + num,
+                        _solver.get_buffer_merge_ptr());
+
+    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
+                        _buffer_int.addr() + num,
+                        _solver.get_buffer_merge_count_ptr());
+
+    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
+                        _buffer_int.addr() + num,
+                        _solver.get_buffer_remove_ptr());
+  } catch (const std::exception &e) {
+    std::cerr << "Error in mass sort_by_key: " << e.what() << std::endl;
+    throw;
+  }
+
   // fill cell_start with zeroes
   try {
     thrust::fill(

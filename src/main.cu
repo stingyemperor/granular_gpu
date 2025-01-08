@@ -38,7 +38,7 @@ const float3 space_size = make_float3(1.0f);
 const float dt = 0.002f;
 const float3 G = make_float3(0.0f, -9.8f, 0.0f);
 const float sphSpacing = 0.02f;
-const float initSpacing = 0.025f;
+const float initSpacing = 0.028f;
 const float smoothing_radius = 2.0f * sphSpacing;
 const float cell_length = 1.01f * smoothing_radius;
 const int3 cell_size = make_int3(ceil(space_size.x / cell_length),
@@ -49,11 +49,11 @@ void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
   std::vector<float3> pos;
   // 36 24 24
-  for (auto i = 0; i < 8; ++i) {
-    for (auto j = 0; j < 16; ++j) {
-      for (auto k = 0; k < 16; ++k) {
-        auto x = make_float3(0.27f + initSpacing * j, 0.10f + initSpacing * i,
-                             0.27f + initSpacing * k);
+  for (auto i = 0; i < 20; ++i) {
+    for (auto j = 0; j < 20; ++j) {
+      for (auto k = 0; k < 30; ++k) {
+        auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
+                             0.17f + initSpacing * k);
         pos.push_back(x);
       }
     }
