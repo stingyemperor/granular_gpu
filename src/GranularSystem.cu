@@ -16,7 +16,7 @@ GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
     std::shared_ptr<GranularParticles> &boundary_particles,
     const float3 space_size, const float cell_length, const float dt,
-    const float3 g, int3 cell_size, const int density)
+    const float3 g, int3 cell_size, const float density)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)), _solver(_particles),
       _space_size(space_size), _dt(dt), _g(g), _cell_length(cell_length),
@@ -25,7 +25,7 @@ GranularSystem::GranularSystem(
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _density(density), _max_mass(3), _min_mass(1),
+      _density(density), _max_mass(4), _min_mass(1),
       _buffer_boundary(_particles->size()) {
   // initalize the boundary_particles
   neighbor_search(_boundaries, _cell_start_boundary);
@@ -82,16 +82,6 @@ void GranularSystem::neighbor_search(
     throw std::runtime_error("CUDA sync error after mapParticles2Cells");
   }
 
-  // Add debug prints for particle_2_cell content
-  // std::vector<int> debug_cells(num);
-  // cudaMemcpy(debug_cells.data(), particles->get_particle_2_cell(),
-  //            sizeof(int) * num, cudaMemcpyDeviceToHost);
-  // std::cout << "First few cell indices: ";
-  // for (int i = 0; i < std::min(10, num); i++) {
-  //   std::cout << debug_cells[i] << " ";
-  // }
-  // std::cout << std::endl;
-
   // copy the cell indexes to _buffer_int with error checking
   try {
     CUDA_CALL(cudaMemcpy(_buffer_int.addr(), particles->get_particle_2_cell(),
@@ -125,6 +115,15 @@ void GranularSystem::neighbor_search(
                         _buffer_int.addr() + num, particles->get_vel_ptr());
   } catch (const std::exception &e) {
     std::cerr << "Error in velocity sort_by_key: " << e.what() << std::endl;
+    throw;
+  }
+
+  // sort mass based on the keys
+  try {
+    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
+                        _buffer_int.addr() + num, particles->get_mass_ptr());
+  } catch (const std::exception &e) {
+    std::cerr << "Error in mass sort_by_key: " << e.what() << std::endl;
     throw;
   }
 
@@ -167,8 +166,6 @@ void GranularSystem::neighbor_search(
     std::cerr << "Final sync error: " << cudaGetErrorString(err) << std::endl;
     throw std::runtime_error("CUDA sync error at end of neighbor_search");
   }
-
-  // std::cout << "Finished neighbor search successfully" << std::endl;
 }
 
 float GranularSystem::step() {
@@ -189,7 +186,7 @@ float GranularSystem::step() {
     cudaDeviceSynchronize();
 
     _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
-                              _cell_size, _space_size, _cell_length);
+                              _cell_size, _space_size, _cell_length, _density);
 
   } catch (const char *s) {
     std::cout << s << "\n";

@@ -25,6 +25,11 @@ public:
     _vel.compact(removal_flags);
   }
 
+  void add_elements(const DArray<float3> &pos, const DArray<float3> &vel) {
+    _pos.append(pos);
+    _vel.append(vel);
+  }
+
   virtual ~Particles() noexcept {}
 
 public:

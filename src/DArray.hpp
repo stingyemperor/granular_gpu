@@ -33,8 +33,6 @@ public:
   unsigned int compact(const DArray<int> &removal_flags) {
     size_t free_mem, total_mem;
     cudaMemGetInfo(&free_mem, &total_mem);
-    std::cout << "Before compact - Free GPU memory: " << free_mem / 1024 / 1024
-              << "MB" << std::endl;
 
     if (removal_flags.length() != _length) {
       std::cerr << "Removal flags length (" << removal_flags.length()
@@ -50,18 +48,15 @@ public:
       // Create temporary storage
       thrust::device_vector<T> temp(_length);
 
-      // Count elements to keep
+      // Count elements to keep (where flag != 1)
       int keep_count =
           thrust::count_if(thrust::device, flags_ptr, flags_ptr + _length,
-                           [] __device__(int flag) { return flag == 0; });
+                           [] __device__(int flag) { return flag != 1; });
 
-      std::cout << "Elements to keep: " << keep_count << " out of " << _length
-                << std::endl;
-
-      // Copy elements where flag is 0
+      // Copy elements where flag != 1 (keeping both 0 and -1)
       auto new_end = thrust::copy_if(
           thrust::device, data_ptr, data_ptr + _length, flags_ptr, temp.begin(),
-          [] __device__(int flag) { return flag == 0; });
+          [] __device__(int flag) { return flag != 1; });
 
       unsigned int new_length =
           static_cast<unsigned int>(new_end - temp.begin());
@@ -86,11 +81,6 @@ public:
       }
 
       _length = new_length;
-
-      cudaMemGetInfo(&free_mem, &total_mem);
-      std::cout << "After compact - Free GPU memory: " << free_mem / 1024 / 1024
-                << "MB" << std::endl;
-
       return _length;
 
     } catch (const thrust::system_error &e) {

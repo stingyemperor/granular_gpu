@@ -20,14 +20,14 @@ public:
             const DArray<int> &cell_start_particle,
             const DArray<int> &cell_start_boundary, float3 space_size,
             int3 cell_size, float cell_length, float dt, float3 G,
-            const int radius);
+            const float density);
   ~Solver() {};
   void project(std::shared_ptr<GranularParticles> &particles,
                const std::shared_ptr<GranularParticles> &boundaries,
                const DArray<int> &cell_start_granular,
                const DArray<int> &cell_start_boundary, int3 cell_size,
                float3 space_size, float cell_length, int max_iter,
-               const int density);
+               const float density);
   void update_neighborhood(const std::shared_ptr<GranularParticles> &particles);
   void add_external_force(std::shared_ptr<GranularParticles> &particles,
                           float dt, float3 G);
@@ -40,7 +40,8 @@ public:
   void adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
                          const DArray<int> &cell_start_granular,
                          const float max_mass, int3 cell_size,
-                         float3 space_size, float cell_length);
+                         float3 space_size, float cell_length,
+                         const float density);
   void split(std::shared_ptr<GranularParticles> &particles);
 
 private:

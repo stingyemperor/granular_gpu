@@ -8,7 +8,7 @@ public:
   GranularSystem(std::shared_ptr<GranularParticles> &particles,
                  std::shared_ptr<GranularParticles> &boundary_particles,
                  float3 space_size, float cell_length, float dt, float3 g,
-                 int3 cell_size, const int density);
+                 int3 cell_size, const float density);
 
   GranularSystem(const GranularSystem &) = delete;
   GranularSystem &operator=(const GranularSystem &) = delete;
@@ -28,6 +28,10 @@ public:
   auto get_boundaries() const {
     return static_cast<const std::shared_ptr<GranularParticles>>(_boundaries);
   }
+
+  float const get_max_mass() { return _max_mass; }
+  float const get_min_mass() { return _min_mass; }
+
   ~GranularSystem() noexcept {}
 
 private:
@@ -44,7 +48,7 @@ private:
   const float3 _space_size;
   const float _dt;
   const float3 _g;
-  const int _density;
+  const float _density;
   const int _max_mass;
   const int _min_mass;
   const int3 _cell_size;

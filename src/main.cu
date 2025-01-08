@@ -38,6 +38,7 @@ const float3 space_size = make_float3(1.0f);
 const float dt = 0.002f;
 const float3 G = make_float3(0.0f, -9.8f, 0.0f);
 const float sphSpacing = 0.02f;
+const float initSpacing = 0.025f;
 const float smoothing_radius = 2.0f * sphSpacing;
 const float cell_length = 1.01f * smoothing_radius;
 const int3 cell_size = make_int3(ceil(space_size.x / cell_length),
@@ -48,11 +49,11 @@ void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
   std::vector<float3> pos;
   // 36 24 24
-  for (auto i = 0; i < 36; ++i) {
-    for (auto j = 0; j < 24; ++j) {
-      for (auto k = 0; k < 24; ++k) {
-        auto x = make_float3(0.27f + sphSpacing * j, 0.10f + sphSpacing * i,
-                             0.27f + sphSpacing * k);
+  for (auto i = 0; i < 8; ++i) {
+    for (auto j = 0; j < 16; ++j) {
+      for (auto k = 0; k < 16; ++k) {
+        auto x = make_float3(0.27f + initSpacing * j, 0.10f + initSpacing * i,
+                             0.27f + initSpacing * k);
         pos.push_back(x);
       }
     }
@@ -233,7 +234,8 @@ void motionFunc(const int x, const int y) {
 
 extern "C" void
 generate_dots(float3 *dot, float3 *color,
-              const std::shared_ptr<GranularParticles> particles, int *surface);
+              const std::shared_ptr<GranularParticles> particles, int *surface,
+              const float max_mass, const float min_mass);
 
 void renderParticles(void) {
   size_t current_particle_count = p_system->size();
@@ -278,7 +280,8 @@ void renderParticles(void) {
   try {
     // calculate the dots' position and color
     generate_dots(dptr, cptr, p_system->get_particles(),
-                  p_system->get_particles()->get_surface_ptr());
+                  p_system->get_particles()->get_surface_ptr(),
+                  p_system->get_max_mass(), p_system->get_min_mass());
   } catch (const std::exception &e) {
     std::cerr << "Error in generate_dots: " << e.what() << std::endl;
   }

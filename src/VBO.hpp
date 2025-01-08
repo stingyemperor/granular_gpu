@@ -7,7 +7,8 @@
 #include <vector>
 
 __global__ void generate_dots_CUDA(float3 *dot, float3 *pos_color, float3 *pos,
-                                   const int num, int *surface) {
+                                   const int num, int *surface, float *mass,
+                                   const float max_mass, const float min_mass) {
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
     return;
@@ -15,20 +16,45 @@ __global__ void generate_dots_CUDA(float3 *dot, float3 *pos_color, float3 *pos,
   dot[i] = pos[i];
   auto w = (powf(1, 2) - 1.0f) * 4.0f;
   w = fminf(w, 1.0f);
-  if (surface[i] == 1) {
-    pos_color[i] = make_float3(0.34f, 0.46f, 0.7f);
-  } else {
-    pos_color[i] =
-        (1 - w) * make_float3(0.9f) + w * make_float3(1.0f, 0.4f, 0.7f);
-  }
+
+  float norm_mass = (mass[i] - min_mass) / (max_mass - min_mass);
+
+  // Linearly interpolate between two colors based on normalized mass
+  float3 color_min = make_float3(0.0f, 0.0f, 1.0f); // Blue for min mass
+  float3 color_max = make_float3(1.0f, 0.0f, 0.0f); // Red for max mass
+
+  pos_color[i] = (1.0f - norm_mass) * color_min + norm_mass * color_max;
 }
+
+// NOTE: Use for boundary
+// __global__ void generate_dots_CUDA(float3 *dot, float3 *pos_color, float3
+// *pos,
+//                                    const int num, int *surface, float *mass,
+//                                    const float max_mass, const float
+//                                    min_mass) {
+//   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+//   if (i >= num)
+//     return;
+//
+//   dot[i] = pos[i];
+//   auto w = (powf(1, 2) - 1.0f) * 4.0f;
+//   w = fminf(w, 1.0f);
+//
+//   if (surface[i] == 1) {
+//     pos_color[i] = make_float3(0.34f, 0.46f, 0.7f);
+//   } else {
+//     pos_color[i] =
+//         (1 - w) * make_float3(0.9f) + w * make_float3(1.0f, 0.4f, 0.7f);
+//   }
+// }
 
 extern "C" void
 generate_dots(float3 *dot, float3 *color,
-              const std::shared_ptr<GranularParticles> particles,
-              int *surface) {
+              const std::shared_ptr<GranularParticles> particles, int *surface,
+              const float max_mass, const float min_mass) {
   generate_dots_CUDA<<<(particles->size() - 1) / block_size + 1, block_size>>>(
-      dot, color, particles->get_pos_ptr(), particles->size(), surface);
+      dot, color, particles->get_pos_ptr(), particles->size(), surface,
+      particles->get_mass_ptr(), max_mass, min_mass);
   cudaDeviceSynchronize();
   CHECK_KERNEL();
   return;
