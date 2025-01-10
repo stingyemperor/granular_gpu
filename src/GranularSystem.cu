@@ -19,13 +19,15 @@ GranularSystem::GranularSystem(
     const float3 g, int3 cell_size, const float density)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)), _solver(_particles),
-      _space_size(space_size), _dt(dt), _g(g), _cell_length(cell_length),
+      _upsampled_dim(10), _space_size(space_size), _dt(dt), _g(g),
+      _cell_length(cell_length),
       _cell_start_particle(cell_size.x * cell_size.y * cell_size.z + 1),
       _cell_start_boundary(cell_size.x * cell_size.y * cell_size.z + 1),
+      _cell_start_upsampled(cell_size.x * cell_size.y * cell_size.z + 1),
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _density(density), _max_mass(4), _min_mass(1),
+      _density(density), _max_mass(4), _min_mass(1), _upsampled_radius(0.005),
       _buffer_boundary(_particles->size()) {
   // initalize the boundary_particles
   neighbor_search(_boundaries, _cell_start_boundary);
@@ -40,7 +42,6 @@ GranularSystem::GranularSystem(
 void GranularSystem::neighbor_search(
     const std::shared_ptr<GranularParticles> &particles,
     DArray<int> &cell_start) {
-
   int num = particles->size();
   std::cout << "Starting neighbor search for " << num << " particles"
             << std::endl;
@@ -144,7 +145,7 @@ void GranularSystem::neighbor_search(
                         _buffer_int.addr() + num,
                         _solver.get_buffer_remove_ptr());
   } catch (const std::exception &e) {
-    std::cerr << "Error in mass sort_by_key: " << e.what() << std::endl;
+    std::cerr << "Error in solver sort_by_key: " << e.what() << std::endl;
     throw;
   }
 

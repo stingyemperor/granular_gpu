@@ -24,6 +24,10 @@ __global__ void generate_dots_CUDA(float3 *dot, float3 *pos_color, float3 *pos,
   float3 color_max = make_float3(1.0f, 0.0f, 0.0f); // Red for max mass
 
   pos_color[i] = (1.0f - norm_mass) * color_min + norm_mass * color_max;
+
+  if (mass[i] < 1) {
+    pos_color[i] = make_float3(0, 0, 0);
+  }
 }
 
 // NOTE: Use for boundary

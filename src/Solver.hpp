@@ -14,7 +14,15 @@ public:
         _pos_t(particles->size()), _num_constraints(particles->size()),
         _buffer_remove(particles->size()), _buffer_split(particles->size()),
         _buffer_merge(particles->size()),
-        _buffer_merge_count(particles->size()) {}
+        _buffer_merge_count(particles->size()) {
+
+    thrust::fill(thrust::device, _buffer_remove.addr(),
+                 _buffer_remove.addr() + particles->size(), 0);
+    thrust::fill(thrust::device, _buffer_merge.addr(),
+                 _buffer_merge.addr() + particles->size(), 0);
+    thrust::fill(thrust::device, _buffer_merge_count.addr(),
+                 _buffer_merge_count.addr() + particles->size(), 0);
+  }
 
   void step(std::shared_ptr<GranularParticles> &paticles,
             const std::shared_ptr<GranularParticles> &boundary,

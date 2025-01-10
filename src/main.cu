@@ -51,7 +51,7 @@ void init_granular_system() {
   // 36 24 24
   for (auto i = 0; i < 20; ++i) {
     for (auto j = 0; j < 20; ++j) {
-      for (auto k = 0; k < 30; ++k) {
+      for (auto k = 0; k < 20; ++k) {
         auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
                              0.17f + initSpacing * k);
         pos.push_back(x);

@@ -44,6 +44,8 @@ private:
    */
   DArray<int> _cell_start_particle;
   DArray<int> _cell_start_boundary;
+  DArray<int> _cell_start_upsampled;
+  const int _upsampled_dim;
   const float _cell_length;
   const float3 _space_size;
   const float _dt;
@@ -52,6 +54,7 @@ private:
   const int _max_mass;
   const int _min_mass;
   const int3 _cell_size;
+  const float _upsampled_radius;
   /** \brief Device array to hold the cell index of each particle*/
   DArray<int> _buffer_int;
   DArray<int> _buffer_boundary;

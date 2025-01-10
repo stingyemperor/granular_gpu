@@ -9,16 +9,19 @@
 #include <cuda_runtime_api.h>
 #include <curand_kernel.h>
 #include <device_atomic_functions.h>
+#include <stdatomic.h>
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
+#include <thrust/functional.h>
 #include <thrust/host_vector.h>
+#include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <vector_types.h>
 
 __device__ __constant__ double pi = 3.14159265358979323846;
-#define EPSILON 1e-6f // Small threshold for comparison
+#define EPSILON_m 1e-4f // Small threshold for comparison
 
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
@@ -417,6 +420,8 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
   if (i >= num)
     return;
 
+  // Only merge if the particle is not a surface particle, not marked to be
+  // removed and not marked to be merged
   if (surface[i] == 0 && atomicOr(&remove[i], 0) == 0) {
     float closest_dis = 1000.0f;
     int closest_index = -1;
@@ -433,19 +438,23 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
 
       int j = cell_start_granular[cellID];
       while (j < cell_start_granular[cellID + 1] && j < num) {
-
-        // if j is marked for removal or marked to be merged
-        if (j == i || atomicOr(&remove[j], 0) == -1 ||
-            atomicOr(&remove[j], 0) == 1 || surface[j] == 1) {
+        // Add debug print when we encounter a merging particle
+        if (atomicOr(&remove[j], 0) != 0) {
+          printf("Particle %d encountered particle %d which has remove flag = "
+                 "%d and mass = %f\n",
+                 i, j, remove[j], mass_granular[j]);
+        }
+        // if j is marked for removal or marked to be merged or a surface
+        // particle
+        if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] == 1) {
           j++;
           continue;
         }
 
         const bool mass_check = mass_granular[j] <= max_mass - mass_granular[i];
-        // printf("mass at %i is %f\n", i, mass_granular[i]);
 
         if (!mass_check) {
-          j++;
+          atomicAdd(&j, 1);
           continue;
         }
 
@@ -457,24 +466,25 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
 
         if (dis < closest_dis) {
           closest_dis = dis;
-          closest_index = j;
+          atomicExch(&closest_index, j);
         }
-        j++;
+        atomicAdd(&j, 1);
       }
     }
 
-    // we did not find  a viable candidate
+    // we found a viable candidate
     if (closest_index != -1) {
-
-      // NOTE: We mark it to be merged and not removed for gradual merging
-      atomicExch(&remove[i], 1);
-      atomicExch(&remove[closest_index], -1);
-      // printf("reached\n");
-      // merge[closest_index] = mass_granular[i];
-      atomicExch(&merge[closest_index], mass_granular[i]);
-      // atomicExch(&merge[i], -mass_granular[i]);
-
-      return;
+      if (atomicOr(&remove[closest_index], 0) == 0) {
+        float transfer_mass = mass_granular[i];
+        printf("Setting up merge: particle %d (mass %.3f) -> particle %d (mass "
+               "%.3f), delta: %f and %f\n",
+               i, mass_granular[i], closest_index, mass_granular[closest_index],
+               transfer_mass, -transfer_mass);
+        atomicExch(&remove[i], -1);
+        atomicExch(&remove[closest_index], -1);
+        atomicExch(&merge[closest_index], transfer_mass);
+        atomicExch(&merge[i], -transfer_mass);
+      }
     }
 
     // Try to atomically acquire the merge lock
@@ -485,10 +495,11 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
     //   merge[closest_index] = mass_granular[i];
     // }
   }
+  return;
 }
 
 __device__ bool isAlmostZero(float x) {
-  return fabsf(x) < EPSILON; // fabsf for single precision
+  return fabsf(x) < EPSILON_m; // fabsf for single precision
 }
 
 __global__ void merge_count_gpu(const int num, float *mass_del,
@@ -496,19 +507,37 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
                                 int *remove, const int blend_factor) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-  merge_count[i]++;
-  mass_granular[i] += mass_del[i] / blend_factor;
 
-  if (merge_count[i] == blend_factor && isAlmostZero(mass_granular[i])) {
-    remove[i] = 1;
-    merge_count[i] = 0;
-    mass_del[i] = 0;
-  } else if (merge_count[i] == blend_factor &&
-             !isAlmostZero(mass_granular[i])) {
+  if (remove[i] == -1) {
+    merge_count[i]++;
+    float old_mass = mass_granular[i];
+    float delta = mass_del[i] / blend_factor;
+    mass_granular[i] += delta;
 
-    remove[i] = 0;
-    merge_count[i] = 0;
-    mass_del[i] = 0;
+    // Print whether this particle is giving or receiving mass
+    if (mass_del[i] > 0) {
+      printf("RECEIVING - Particle %d: mass %f -> %f (delta: %f, merge_count: "
+             "%d)\n",
+             i, old_mass, mass_granular[i], delta, merge_count[i]);
+    } else {
+      printf(
+          "GIVING - Particle %d: mass %f -> %f (delta: %f, merge_count: %d)\n",
+          i, old_mass, mass_granular[i], delta, merge_count[i]);
+    }
+
+    if (merge_count[i] == blend_factor) {
+      if (mass_del[i] < 0) { // Only remove particles that are giving mass
+        printf("Removing particle %d with mass %f (was giving mass)\n", i,
+               mass_granular[i]);
+        remove[i] = 1;
+      } else {
+        printf("Keeping particle %d with final mass %f (was receiving mass)\n",
+               i, mass_granular[i]);
+        remove[i] = 0;
+      }
+      merge_count[i] = 0;
+      mass_del[i] = 0;
+    }
   }
 }
 
@@ -522,36 +551,34 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   // Merging/removing particles cannot split
-  if (i >= num || atomicOr(&remove[i], 0) != 0)
+  if (i >= num || atomicOr(&remove[i], 0) != 0 || surface[i] != 1)
     return;
 
-  if (surface[i] == 1) {
-    if (mass_granular[i] >= 2 * min_mass) {
+  if (mass_granular[i] >= 2 * min_mass) {
 
-      const float new_mass = mass_granular[i] / 2;
-      const float3 new_vel = vel_granular[i];
+    const float new_mass = mass_granular[i] / 2;
+    const float3 new_vel = vel_granular[i];
 
-      // TODO: make the position selection random
+    // TODO: make the position selection random
 
-      const float r_i = cbrtf((3 * mass_granular[i]) / (4 * pi * density));
+    const float r_i = cbrtf((3 * mass_granular[i]) / (4 * pi * density));
 
-      const float3 new_pos_1 = make_float3(
-          pos_granular[i].x + r_i, pos_granular[i].y, pos_granular[i].z);
-      const float3 new_pos_2 = make_float3(
-          pos_granular[i].x - r_i, pos_granular[i].y, pos_granular[i].z);
+    const float3 new_pos_1 = make_float3(pos_granular[i].x + r_i,
+                                         pos_granular[i].y, pos_granular[i].z);
+    const float3 new_pos_2 = make_float3(pos_granular[i].x - r_i,
+                                         pos_granular[i].y, pos_granular[i].z);
 
-      mass_granular[i] = new_mass;
-      atomicExch(&split_mass[split_count], new_mass);
+    mass_granular[i] = new_mass;
+    atomicExch(&split_mass[split_count], new_mass);
 
-      vel_granular[i] = new_vel;
-      split_vel[split_count] = new_vel;
+    vel_granular[i] = new_vel;
+    split_vel[split_count] = new_vel;
 
-      pos_granular[i] = new_pos_1;
-      split_pos[split_count] = new_pos_2;
+    pos_granular[i] = new_pos_1;
+    split_pos[split_count] = new_pos_2;
 
-      atomicAdd(&split_count, 1);
-      // split
-    }
+    atomicAdd(&split_count, 1);
+    // split
   }
   return;
 }
@@ -576,20 +603,17 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
   if (num == 0)
     return;
 
-  // Ensure buffers are properly sized
-  _buffer_remove.resize(num);
-  _buffer_merge.resize(num);
-
-  // Zero out all buffers
-  thrust::fill(thrust::device, _buffer_remove.addr(),
-               _buffer_remove.addr() + num, 0);
-  thrust::fill(thrust::device, _buffer_merge.addr(), _buffer_merge.addr() + num,
-               0);
-
   cudaDeviceSynchronize();
 
-  // Run merge kernel
   try {
+    // old mass
+
+    auto m_t = thrust::device_pointer_cast(particles->get_mass_ptr());
+
+    const float old_mass =
+        thrust::reduce(m_t, m_t + num, 0, thrust::plus<float>());
+
+    // Run merge kernel
     merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
         num, particles->get_pos_ptr(), particles->get_mass_ptr(),
         particles->get_surface_ptr(), _buffer_remove.addr(),
@@ -598,17 +622,45 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     cudaDeviceSynchronize();
 
+    // Print info about particles being removed
+    std::vector<int> host_remove(num);
+    std::vector<float> host_mass(num);
+    CUDA_CALL(cudaMemcpy(host_remove.data(), _buffer_remove.addr(),
+                         sizeof(int) * num, cudaMemcpyDeviceToHost));
+    CUDA_CALL(cudaMemcpy(host_mass.data(), particles->get_mass_ptr(),
+                         sizeof(float) * num, cudaMemcpyDeviceToHost));
+
+    int removal_count = 0;
+    std::cout << "Particles marked for removal (mass):\n";
+    for (int i = 0; i < num; i++) {
+      if (host_remove[i] == 1) {
+        removal_count++;
+        std::cout << "Particle " << i << ": mass = " << host_mass[i]
+                  << ", remove flag = " << host_remove[i]
+                  << ", merge mass delta = ";
+
+        // Get merge mass delta for this particle
+        float merge_delta;
+        CUDA_CALL(cudaMemcpy(&merge_delta, &_buffer_merge.addr()[i],
+                             sizeof(float), cudaMemcpyDeviceToHost));
+        std::cout << merge_delta << "\n";
+      }
+    }
+    std::cout << "Total particles marked for removal: " << removal_count
+              << "\n";
+
+    // Run split kernel
     int n_split = 0;
     DArray<float> split_mass(1000);
     DArray<float3> split_pos(1000);
     DArray<float3> split_vel(1000);
 
-    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), particles->get_surface_ptr(),
-        _buffer_remove.addr(), _buffer_merge.addr(), cell_start_granular.addr(),
-        max_mass, cell_size, split_mass.addr(), split_pos.addr(),
-        split_vel.addr(), n_split, density);
+    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+    //     particles->get_vel_ptr(), particles->get_surface_ptr(),
+    //     _buffer_remove.addr(), _buffer_merge.addr(),
+    //     cell_start_granular.addr(), max_mass, cell_size, split_mass.addr(),
+    //     split_pos.addr(), split_vel.addr(), n_split, density);
 
     cudaDeviceSynchronize();
 
@@ -624,41 +676,60 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     }
 
     // TODO: Velocity update
-    thrust::transform(thrust::device, particles->get_mass_ptr(),
-                      particles->get_mass_ptr() + num, _buffer_merge.addr(),
-                      particles->get_mass_ptr(), thrust::plus<float>());
+    // thrust::transform(thrust::device, particles->get_mass_ptr(),
+    //                   particles->get_mass_ptr() + num,
+    //                   _buffer_merge.addr(), particles->get_mass_ptr(),
+    //                   thrust::plus<float>());
+    //
 
-    // merge_count_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-    //     num, _buffer_merge.addr(), particles->get_mass_ptr(),
-    //     _buffer_merge_count.addr(), _buffer_remove.addr(), _blend_factor);
+    // gradual merging
+    merge_count_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, _buffer_merge.addr(), particles->get_mass_ptr(),
+        _buffer_merge_count.addr(), _buffer_remove.addr(), _blend_factor);
 
     cudaDeviceSynchronize();
-    // print_mass(_buffer_merge);
-    // print_darray_int(_buffer_remove);
 
-    // thrust::device_vector<int> rem(_buffer_remove.addr(),
-    //                                _buffer_remove.addr() + num);
-    // std::cout << "To remove : " << thrust::count(rem.begin(), rem.end(), 1)
-    //           << "\n";
+    // Print final state before removal
+    std::cout << "\nFinal state before removal:\n";
+    CUDA_CALL(cudaMemcpy(host_mass.data(), particles->get_mass_ptr(),
+                         sizeof(float) * num, cudaMemcpyDeviceToHost));
+    CUDA_CALL(cudaMemcpy(host_remove.data(), _buffer_remove.addr(),
+                         sizeof(int) * num, cudaMemcpyDeviceToHost));
 
-    // print_mass(particles->get_mass());
-    // Remove marked elements
-    int old_count = particles->size();
+    for (int i = 0; i < num; i++) {
+      if (host_remove[i] == 1) {
+        std::cout << "Particle " << i << ": final mass = " << host_mass[i]
+                  << "\n";
+      }
+    }
 
     // remove elements
     particles->remove_elements(_buffer_remove);
-    // _buffer_merge_count.compact(_buffer_remove);
-    // _buffer_merge.compact(_buffer_remove);
-    // _buffer_remove.compact(_buffer_remove);
+    _buffer_merge_count.compact(_buffer_remove);
+    _buffer_merge.compact(_buffer_remove);
+    _buffer_remove.compact(_buffer_remove);
 
+    // add elements
     particles->add_elements(split_mass, split_pos, split_vel, n_split);
-    // _buffer_merge_count.resize(particles->size());
-    // _buffer_merge.resize(particles->size());
-    // _buffer_remove.resize(particles->size());
+    _buffer_merge_count.resize(particles->size());
+    _buffer_merge.resize(particles->size());
+    _buffer_remove.resize(particles->size());
 
     cudaDeviceSynchronize();
 
-    // std::cout << "Total removed : " << particles->size() - old_count << "\n";
+    // change in mass
+
+    // std::cout << "Total removed : " << particles->size() - old_count <<
+    // "\n";
+
+    // Print total mass after
+    auto m_t_n = thrust::device_pointer_cast(particles->get_mass_ptr());
+    const float new_mass = thrust::reduce(m_t_n, m_t_n + particles->size(), 0,
+                                          thrust::plus<float>());
+    std::cout << "Total mass after: " << new_mass << "\n";
+    if ((new_mass - old_mass) != 0) {
+      std::cout << "Change in mass " << new_mass - old_mass << "\n";
+    }
 
   } catch (const std::exception &e) {
     std::cerr << "Error in adaptive_sampling: " << e.what() << std::endl;
