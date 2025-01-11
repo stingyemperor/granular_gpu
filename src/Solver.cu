@@ -474,16 +474,22 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
 
     // we found a viable candidate
     if (closest_index != -1) {
-      if (atomicOr(&remove[closest_index], 0) == 0) {
-        float transfer_mass = mass_granular[i];
-        printf("Setting up merge: particle %d (mass %.3f) -> particle %d (mass "
-               "%.3f), delta: %f and %f\n",
-               i, mass_granular[i], closest_index, mass_granular[closest_index],
-               transfer_mass, -transfer_mass);
-        atomicExch(&remove[i], -1);
-        atomicExch(&remove[closest_index], -1);
-        atomicExch(&merge[closest_index], transfer_mass);
-        atomicExch(&merge[i], -transfer_mass);
+      // Try to mark both particles atomically
+      if (atomicCAS(&remove[i], 0, -1) == 0) { // First try to mark i
+        if (atomicCAS(&remove[closest_index], 0, -1) ==
+            0) { // Then try to mark closest_index
+          // Both particles were successfully marked
+          atomicExch(&merge[closest_index], mass_granular[i]);
+          atomicExch(&merge[i], -mass_granular[i]);
+          printf("Setting up merge: particle %d (mass %.3f) -> particle %d "
+                 "(mass %.3f), delta: %f and %f\n",
+                 i, mass_granular[i], closest_index,
+                 mass_granular[closest_index], mass_granular[i],
+                 -mass_granular[i]);
+        } else {
+          // Failed to mark closest_index, revert i's marking
+          atomicExch(&remove[i], 0);
+        }
       }
     }
 
@@ -509,6 +515,7 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
   if (remove[i] == -1) {
+    printf("Raw mass_del[%d] = %f\n", i, mass_del[i]);
     merge_count[i]++;
     float old_mass = mass_granular[i];
     float delta = mass_del[i] / blend_factor;
