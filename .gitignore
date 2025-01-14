@@ -4,6 +4,7 @@
 *.lo
 *.o
 *.obj
+*.idx
 
 # Precompiled Headers
 *.gch
@@ -53,3 +54,5 @@ include/*
 lib/*
 bin/*
 test/test_runner
+.cache/*
+.vscode/*
