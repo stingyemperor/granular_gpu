@@ -16,12 +16,20 @@ public:
         _buffer_merge(particles->size()),
         _buffer_merge_count(particles->size()) {
 
-    thrust::fill(thrust::device, _buffer_remove.addr(),
-                 _buffer_remove.addr() + particles->size(), 0);
-    thrust::fill(thrust::device, _buffer_merge.addr(),
-                 _buffer_merge.addr() + particles->size(), 0);
-    thrust::fill(thrust::device, _buffer_merge_count.addr(),
-                 _buffer_merge_count.addr() + particles->size(), 0);
+    thrust::device_ptr<int> thrust_remove =
+        thrust::device_pointer_cast(_buffer_remove.addr());
+    thrust::fill(thrust::device, thrust_remove,
+                 thrust_remove + particles->size(), 0);
+
+    thrust::device_ptr<float> thrust_merge =
+        thrust::device_pointer_cast(_buffer_merge.addr());
+    thrust::fill(thrust::device, thrust_merge, thrust_merge + particles->size(),
+                 0);
+
+    thrust::device_ptr<int> thrust_merge_count =
+        thrust::device_pointer_cast(_buffer_merge_count.addr());
+    thrust::fill(thrust::device, thrust_merge_count,
+                 thrust_merge_count + particles->size(), 0);
   }
 
   void step(std::shared_ptr<GranularParticles> &paticles,

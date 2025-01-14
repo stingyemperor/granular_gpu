@@ -32,7 +32,11 @@ public:
   float const get_max_mass() { return _max_mass; }
   float const get_min_mass() { return _min_mass; }
 
-  ~GranularSystem() noexcept {}
+  ~GranularSystem() {
+
+    // Force synchronization
+    cudaDeviceSynchronize();
+  }
 
 private:
   std::shared_ptr<GranularParticles> _particles;

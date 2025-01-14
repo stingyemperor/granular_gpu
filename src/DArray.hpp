@@ -2,6 +2,7 @@
 #pragma once
 #include "Global.hpp"
 #include <cuda_runtime.h>
+#include <stdexcept>
 #include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
@@ -11,16 +12,50 @@
 
 template <typename T> class DArray {
 public:
-  // Constructor that handles both size and capacity
   explicit DArray(unsigned int size, unsigned int initial_capacity = 0)
       : _length(size), _capacity(std::max(size, initial_capacity)) {
-    // Allocate device memory
-    CUDA_CALL(cudaMalloc(&_addr, sizeof(T) * _capacity));
+
+    // Add size validation
+    if (size > 1000000000) { // Sanity check for extremely large allocations
+      throw std::runtime_error("Suspiciously large array size requested");
+    }
+
+    // Check available memory before allocation
+    size_t free_mem, total_mem;
+    cudaMemGetInfo(&free_mem, &total_mem);
+    size_t required_mem = sizeof(T) * _capacity;
+
+    if (required_mem > free_mem) {
+      std::cerr << "Not enough GPU memory. Required: " << required_mem
+                << " Available: " << free_mem << std::endl;
+      throw std::runtime_error("Insufficient GPU memory");
+    }
+
+    // Try allocation with error checking
+    cudaError_t err = cudaMalloc(&_addr, required_mem);
+    if (err != cudaSuccess) {
+      std::cerr << "CUDA malloc failed for size " << size << " capacity "
+                << _capacity << " bytes " << required_mem
+                << " Error: " << cudaGetErrorString(err) << std::endl;
+      throw std::runtime_error("CUDA malloc failed");
+    }
+
+    // Initialize memory to zero
+    err = cudaMemset(_addr, 0, required_mem);
+    if (err != cudaSuccess) {
+      cudaFree(_addr);
+      throw std::runtime_error("CUDA memset failed");
+    }
   }
 
   ~DArray() {
     if (_addr) {
-      cudaFree(_addr);
+      cudaError_t err = cudaFree(_addr);
+      if (err != cudaSuccess) {
+        std::cerr << "Failed to free CUDA memory in destructor: "
+                  << cudaGetErrorString(err) << std::endl;
+      }
+      _addr = nullptr;
     }
   }
 

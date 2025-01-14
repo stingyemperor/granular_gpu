@@ -197,10 +197,12 @@ float GranularSystem::step() {
   // CUDA_CALL(cudaEventRecord(start, 0));
 
   neighbor_search(_particles, _cell_start_particle);
+
   try {
     _solver.step(_particles, _boundaries, _cell_start_particle,
                  _cell_start_boundary, _space_size, _cell_size, _cell_length,
                  _dt, _g, _density);
+
     // cudaDeviceSynchronize();
     CHECK_KERNEL();
     set_surface_particles(_particles, _cell_start_particle);
