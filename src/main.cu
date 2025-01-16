@@ -8,6 +8,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <vector>
 
 // vbo and GL variables
@@ -59,6 +60,24 @@ void init_granular_system() {
     }
   }
   auto granular_particles = std::make_shared<GranularParticles>(pos);
+
+  std::vector<float3> upsampled_pos;
+  std::default_random_engine generator;
+  std::uniform_real_distribution<float> distribution(-particle_radius,
+                                                     particle_radius);
+
+  for (const auto &particle : pos) {
+    for (int n = 0; n < 10;
+         ++n) { // Generate 10 upsampled particles per original particle
+      float3 offset =
+          make_float3(distribution(generator), distribution(generator),
+                      distribution(generator));
+      upsampled_pos.push_back(particle + offset);
+    }
+  }
+
+  auto upsampled_particles = std::make_shared<GranularParticles>(upsampled_pos);
+
   pos.clear();
 
   const auto compact_size = 2 * make_int3(ceil(space_size.x / cell_length),
@@ -99,8 +118,9 @@ void init_granular_system() {
   }
 
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
+
   p_system = std::make_shared<GranularSystem>(
-      granular_particles, boundary_particles, space_size, cell_length, dt, G,
+      granular_particles, boundary_particles,upsampled_particles, space_size, cell_length, dt, G,
       cell_size, density);
 }
 

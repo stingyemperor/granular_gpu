@@ -14,6 +14,7 @@ find_package(GLUT REQUIRED)
 # Set the source directory
 set(SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")
 
+
 # Recursively find all source files
 file(
   GLOB_RECURSE
@@ -22,25 +23,44 @@ file(
   "${SOURCE_DIR}/*.cpp"
   "${SOURCE_DIR}/*.hpp"
   "${SOURCE_DIR}/*.cu"
-  "${SOURCE_DIR}/*.h")
+  "${SOURCE_DIR}/*.h"
+   "${PROJECT_SOURCE_DIR}/imgui/imgui.cpp"
+    "${PROJECT_SOURCE_DIR}/imgui/imgui_demo.cpp"
+    "${PROJECT_SOURCE_DIR}/imgui/imgui_draw.cpp"
+    "${PROJECT_SOURCE_DIR}/imgui/imgui_tables.cpp"
+    "${PROJECT_SOURCE_DIR}/imgui/imgui_widgets.cpp"
+    "${PROJECT_SOURCE_DIR}/imgui/backends/imgui_impl_glut.h"
+    "${PROJECT_SOURCE_DIR}/imgui/backends/imgui_impl_glut.cpp"
+   "${PROJECT_SOURCE_DIR}/imgui/backends/imgui_impl_opengl2.cpp"
+
+)
 
 # Create executable target
 add_executable(main ${SOURCE_FILES})
 
+
+# Include directories
+target_include_directories(main PRIVATE
+    imgui
+    imgui/backends
+    /usr/include
+)
+
 # Include directories
 target_include_directories(
   main PRIVATE ${CUDAToolkit_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS}
-               ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR})
+               ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR} )
 
 # Link libraries
 target_link_libraries(
   main PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES} OpenGL::GL GLU
 )
 
+
 # CUDA compilation flags
 # Note the addition of --extended-lambda flag
-set(CMAKE_CXX_FLAGS_DEBUG "-g")
-set(CMAKE_CUDA_FLAGS_DEBUG "-g -G")
+# set(CMAKE_CXX_FLAGS_DEBUG "-g")
+# set(CMAKE_CUDA_FLAGS_DEBUG "-g -G")
 
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall --extended-lambda")
 
@@ -63,6 +83,7 @@ thrust_create_target(Thrust)
 
 # Link Thrust to our target
 target_link_libraries(main PRIVATE Thrust)
+
 
 # Debug messages
 message(STATUS "CMAKE_CUDA_COMPILER_VERSION: ${CMAKE_CUDA_COMPILER_VERSION}")

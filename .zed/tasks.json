@@ -1,0 +1,90 @@
+[
+  {
+    "label": "CMake Configure",
+    "command": "cmake -S . -B build -G Ninja",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "CMake Build",
+    "command": "cmake --build build",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "CMake Clean",
+    "command": "rm -rf build",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "Run",
+    "command": "./build/main",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "Build and Run",
+    "command": "cmake -S . -B build -G Ninja && cmake --build build && ./build/main",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "CMake Configure (Debug)",
+    "command": "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "CMake Configure (Release)",
+    "command": "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  },
+  {
+    "label": "Run Tests",
+    "command": "cd build && ctest --output-on-failure",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
+  }
+]

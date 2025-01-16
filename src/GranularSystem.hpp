@@ -7,6 +7,7 @@ class GranularSystem {
 public:
   GranularSystem(std::shared_ptr<GranularParticles> &particles,
                  std::shared_ptr<GranularParticles> &boundary_particles,
+                 std::shared_ptr<GranularParticles> &upsampled_particles,
                  float3 space_size, float cell_length, float dt, float3 g,
                  int3 cell_size, const float density);
 
@@ -29,6 +30,10 @@ public:
     return static_cast<const std::shared_ptr<GranularParticles>>(_boundaries);
   }
 
+  auto get_upsampled() const {
+    return static_cast<const std::shared_ptr<GranularParticles>>(_upsampled);
+  }
+
   float const get_max_mass() { return _max_mass; }
   float const get_min_mass() { return _min_mass; }
 
@@ -40,6 +45,7 @@ public:
 
 private:
   std::shared_ptr<GranularParticles> _particles;
+  std::shared_ptr<GranularParticles> _upsampled;
   const std::shared_ptr<GranularParticles> _boundaries;
 
   // TODO: add solver

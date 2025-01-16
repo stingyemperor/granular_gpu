@@ -1,0 +1,27 @@
+version: 1
+
+config:
+  build_type: Release
+  build_dir: build
+
+tasks:
+  build:
+    description: Build the CMake project
+    steps:
+      - run: cmake -S . -B {{build_dir}} -DCMAKE_BUILD_TYPE={{build_type}}
+      - run: cmake --build {{build_dir}}
+
+  clean:
+    description: Clean build artifacts
+    steps:
+      - run: rm -rf {{build_dir}}
+
+  run:
+    description: Run the built executable
+    deps: [build]
+    steps:
+      - run: ./{{build_dir}}/main
+
+  default:
+    description: Default task - builds and runs
+    deps: [run]

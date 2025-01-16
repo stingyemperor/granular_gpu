@@ -14,6 +14,7 @@ public:
         _pos_t(particles->size()), _num_constraints(particles->size()),
         _buffer_remove(particles->size()), _buffer_split(particles->size()),
         _buffer_merge(particles->size()),
+        _buffer_merge_velocity(particles->size()),
         _buffer_merge_count(particles->size()) {
 
     thrust::device_ptr<int> thrust_remove =
@@ -30,6 +31,12 @@ public:
         thrust::device_pointer_cast(_buffer_merge_count.addr());
     thrust::fill(thrust::device, thrust_merge_count,
                  thrust_merge_count + particles->size(), 0);
+
+    const float3 zero = make_float3(0.0f, 0.0f, 0.0f);
+    thrust::device_ptr<float3> thrust_merge_velocity =
+        thrust::device_pointer_cast(_buffer_merge_velocity.addr());
+    thrust::fill(thrust::device, thrust_merge_velocity,
+                 thrust_merge_velocity + particles->size(), zero);
   }
 
   void step(std::shared_ptr<GranularParticles> &paticles,
@@ -82,5 +89,6 @@ private:
   DArray<int> _buffer_remove;
   DArray<int> _buffer_split;
   DArray<float> _buffer_merge;
+  DArray<float3> _buffer_merge_velocity;
   DArray<int> _buffer_merge_count;
 };

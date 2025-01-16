@@ -15,10 +15,12 @@
 GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
     std::shared_ptr<GranularParticles> &boundary_particles,
+    std::shared_ptr<GranularParticles> &upsampled_particles,
     const float3 space_size, const float cell_length, const float dt,
     const float3 g, int3 cell_size, const float density)
     : _particles(std::move(granular_particles)),
-      _boundaries(std::move(boundary_particles)), _solver(_particles),
+      _boundaries(std::move(boundary_particles)),
+      _upsampled(std::move(upsampled_particles)), _solver(_particles),
       _upsampled_dim(10), _space_size(space_size), _dt(dt), _g(g),
       _cell_length(cell_length),
       _cell_start_particle(cell_size.x * cell_size.y * cell_size.z + 1),
@@ -191,10 +193,10 @@ void GranularSystem::neighbor_search(
 }
 
 float GranularSystem::step() {
-  // cudaEvent_t start, stop;
-  // CUDA_CALL(cudaEventCreate(&start));
-  // CUDA_CALL(cudaEventCreate(&stop));
-  // CUDA_CALL(cudaEventRecord(start, 0));
+  cudaEvent_t start, stop;
+  CUDA_CALL(cudaEventCreate(&start));
+  CUDA_CALL(cudaEventCreate(&stop));
+  CUDA_CALL(cudaEventRecord(start, 0));
 
   neighbor_search(_particles, _cell_start_particle);
 
@@ -219,12 +221,14 @@ float GranularSystem::step() {
               << "\n";
   }
 
-  // float milliseconds;
-  // CUDA_CALL(cudaEventRecord(stop, 0));
-  // CUDA_CALL(cudaEventSynchronize(stop));
-  // CUDA_CALL(cudaEventElapsedTime(&milliseconds, start, stop));
-  // CUDA_CALL(cudaEventDestroy(start));
-  // CUDA_CALL(cudaEventDestroy(stop));
+  float milliseconds;
+  CUDA_CALL(cudaEventRecord(stop, 0));
+  CUDA_CALL(cudaEventSynchronize(stop));
+  CUDA_CALL(cudaEventElapsedTime(&milliseconds, start, stop));
+  CUDA_CALL(cudaEventDestroy(start));
+  CUDA_CALL(cudaEventDestroy(stop));
+
+  std::cout << "Frame time : " << milliseconds << "\n";
   // return milliseconds;
   return 1;
 }
