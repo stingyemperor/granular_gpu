@@ -17,6 +17,7 @@ public:
   float step();
 
   int size() const { return (*_particles).size(); }
+  int upsampled_size() const { return (*_upsampled).size(); }
 
   int boundary_size() const { return (*_boundaries).size(); }
   int total_size() const {

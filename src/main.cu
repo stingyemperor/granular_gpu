@@ -14,6 +14,9 @@
 // vbo and GL variables
 static GLuint particlesVBO;
 static GLuint particlesColorVBO;
+static GLuint upsampledParticlesVBO;
+static GLuint upsampledParticlesColorVBO;
+static const float upsampled_particle_radius = 0.005f; // Half
 static GLuint m_particles_program;
 static const int m_window_h = 1600;
 static const int m_fov = 30;
@@ -120,8 +123,8 @@ void init_granular_system() {
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
 
   p_system = std::make_shared<GranularSystem>(
-      granular_particles, boundary_particles,upsampled_particles, space_size, cell_length, dt, G,
-      cell_size, density);
+      granular_particles, boundary_particles, upsampled_particles, space_size,
+      cell_length, dt, G, cell_size, density);
 }
 
 void resizeVBO(GLuint *vbo, size_t new_size) {
@@ -202,6 +205,8 @@ void deleteVBO(GLuint *vbo) {
 void onClose(void) {
   deleteVBO(&particlesVBO);
   deleteVBO(&particlesColorVBO);
+  deleteVBO(&upsampledParticlesVBO);
+  deleteVBO(&upsampledParticlesColorVBO);
 
   p_system = nullptr;
   CUDA_CALL(cudaDeviceReset());
@@ -324,6 +329,44 @@ void renderParticles(void) {
   glDisableClientState(GL_COLOR_ARRAY);
 }
 
+void renderUpsampledParticles(void) {
+  size_t current_upsampled_count = p_system->upsampled_size();
+
+  // map OpenGL buffer object for writing from CUDA
+  float3 *dptr;
+  float3 *cptr;
+
+  CUDA_CALL(cudaGLMapBufferObject((void **)&dptr, upsampledParticlesVBO));
+  CUDA_CALL(cudaGLMapBufferObject((void **)&cptr, upsampledParticlesColorVBO));
+
+  try {
+    // calculate the dots' position and color
+    generate_dots(dptr, cptr, p_system->get_upsampled(),
+                  p_system->get_upsampled()->get_surface_ptr(),
+                  p_system->get_max_mass(), p_system->get_min_mass());
+  } catch (const std::exception &e) {
+    std::cerr << "Error in generate_dots for upsampled particles: " << e.what()
+              << std::endl;
+  }
+
+  // unmap buffer objects
+  CUDA_CALL(cudaGLUnmapBufferObject(upsampledParticlesVBO));
+  CUDA_CALL(cudaGLUnmapBufferObject(upsampledParticlesColorVBO));
+
+  glBindBuffer(GL_ARRAY_BUFFER, upsampledParticlesVBO);
+  glVertexPointer(3, GL_FLOAT, 0, nullptr);
+  glEnableClientState(GL_VERTEX_ARRAY);
+
+  glBindBuffer(GL_ARRAY_BUFFER, upsampledParticlesColorVBO);
+  glColorPointer(3, GL_FLOAT, 0, nullptr);
+  glEnableClientState(GL_COLOR_ARRAY);
+
+  glDrawArrays(GL_POINTS, 0, current_upsampled_count);
+
+  glDisableClientState(GL_VERTEX_ARRAY);
+  glDisableClientState(GL_COLOR_ARRAY);
+}
+
 void one_step() {
   ++frameId;
   p_system->step();
@@ -340,6 +383,13 @@ void initGL(void) {
   createVBO(&particlesVBO, sizeof(float3) * p_system->size());
   createVBO(&particlesColorVBO, sizeof(float3) * p_system->size());
   // initiate shader program
+
+  // New VBOs for upsampled particles
+  createVBO(&upsampledParticlesVBO,
+            sizeof(float3) * p_system->upsampled_size());
+  createVBO(&upsampledParticlesColorVBO,
+            sizeof(float3) * p_system->upsampled_size());
+
   m_particles_program = glCreateProgram();
   glBindAttribLocation(m_particles_program, particle_attributes::SIZE,
                        "pointSize");
@@ -430,6 +480,12 @@ static void displayFunc(void) {
   glPushMatrix();
   glTranslatef(-0.5f, -0.5f, -0.5f);
   renderParticles();
+
+  // Render upsampled particles
+  glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
+              upsampled_particle_radius);
+  renderUpsampledParticles();
+
   glPopMatrix();
   glPopMatrix();
 
