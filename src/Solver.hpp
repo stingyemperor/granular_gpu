@@ -1,6 +1,5 @@
 #pragma once
 #include "GranularParticles.hpp"
-#include "cuda_runtime.h"
 #include <thrust/execution_policy.h>
 #include <thrust/reduce.h>
 #include <thrust/sort.h>
@@ -58,6 +57,8 @@ public:
 
   void update_particle_positions(std::shared_ptr<GranularParticles> &particles,
                                  float dt);
+
+  void apply_mass_scaling(std::shared_ptr<GranularParticles> &particles);
 
   void final_update(std::shared_ptr<GranularParticles> &particles, float dt);
 

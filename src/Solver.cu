@@ -1,5 +1,6 @@
 #include "CUDAFunctions.cuh"
 #include "Global.hpp"
+#include "GranularParticles.hpp"
 #include "Solver.hpp"
 #include "helper_math.h"
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
+#include <unistd.h>
 #include <vector_types.h>
 
 __device__ __constant__ double pi = 3.14159265358979323846;
@@ -48,7 +50,7 @@ void print_mass(const DArray<float> &mass) {
                        cudaMemcpyDeviceToHost));
 
   // Step 3: Print the data
-  for (size_t i = 0; i < length; ++i) {
+  for (size_t i = -1; i < length; ++i) {
     std::cout << "Mass[" << i << "] = " << host_array[i] << std::endl;
   }
 }
@@ -78,6 +80,7 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   // update velocity
   add_external_force(particles, dt, G);
   update_particle_positions(particles, dt);
+  apply_mass_scaling(particles);
 
   // update_neighborhood(particles);
   // project constraints
@@ -127,13 +130,6 @@ struct predict_position_functor {
 
 void Solver::update_particle_positions(
     std::shared_ptr<GranularParticles> &particles, float dt) {
-  // Assuming particles->get_pos_ptr() returns a pointer to the first element of
-  // the position buffer and particles->get_vel_ptr() returns a pointer to the
-  // first element of the velocity buffer
-
-  // Create zip iterator for positions and velocities
-  // We use a zip iterator because we need to loop through postions and
-  // velocties together
   auto begin = thrust::make_zip_iterator(
       thrust::make_tuple(particles->get_pos_ptr(), particles->get_vel_ptr()));
   auto end = thrust::make_zip_iterator(
@@ -145,6 +141,37 @@ void Solver::update_particle_positions(
       thrust::device, begin, end, _pos_t.addr(),
       // particles->get_pos_ptr(), // Output to the positions buffer
       predict_position_functor(dt));
+}
+
+struct mass_scaling_functor {
+  // float _min_mass;
+  // float _max_mass;
+  // float _max_height;
+  // float _min_height;
+
+  // mass_scaling_functor(float min_mass, float max_mass, float max_height,
+  //                      float min_height)
+  //     : _min_mass(min_mass), _max_mass(max_mass), _min_height(min_height),
+  //       _max_height(max_height) {}
+  mass_scaling_functor() {}
+  __host__ __device__ float
+  operator()(const thrust::tuple<float, float3> &t) const {
+    const float &mass = thrust::get<0>(t);
+    const float3 &pos = thrust::get<1>(t);
+
+    return mass * exp(-pos.y);
+  }
+};
+
+void Solver::apply_mass_scaling(std::shared_ptr<GranularParticles> &particles) {
+  auto begin = thrust::make_zip_iterator(
+      thrust::make_tuple(particles->get_mass_ptr(), particles->get_pos_ptr()));
+  auto end = thrust::make_zip_iterator(
+      thrust::make_tuple(particles->get_mass_ptr() + particles->size(),
+                         particles->get_pos_ptr() + particles->size()));
+
+  thrust::transform(thrust::device, begin, end,
+                    particles->get_scaled_mass_ptr(), mass_scaling_functor());
 }
 
 struct final_velocity_functor {
@@ -324,7 +351,7 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
     compute_delta_pos<<<(num - 1) / block_size + 1, block_size>>>(
 
         _buffer_float3.addr(), _num_constraints.addr(), _pos_t.addr(),
-        boundaries->get_pos_ptr(), particles->get_mass_ptr(), num,
+        boundaries->get_pos_ptr(), particles->get_scaled_mass_ptr(), num,
         cell_start_granular.addr(), cell_start_boundary.addr(), cell_size,
         cell_length, density);
 
@@ -567,9 +594,11 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
       float3 p_j = pos_granular[j];
       float dis = norm3df(pos_i.x - p_j.x, pos_i.y - p_j.y, pos_i.z - p_j.z);
 
-      if (dis < closest_dis) {
-        closest_dis = dis;
-        closest_index = j;
+      if (dis < 0.05) {
+        if (dis < closest_dis) {
+          closest_dis = dis;
+          closest_index = j;
+        }
       }
       j++;
     }
@@ -780,12 +809,12 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     DArray<float3> split_pos(1000);
     DArray<float3> split_vel(1000);
 
-    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-    //     particles->get_vel_ptr(), particles->get_surface_ptr(),
-    //     _buffer_remove.addr(), _buffer_merge.addr(),
-    //     cell_start_granular.addr(), max_mass, cell_size, split_mass.addr(),
-    //     split_pos.addr(), split_vel.addr(), n_split, density);
+    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+        particles->get_vel_ptr(), particles->get_surface_ptr(),
+        _buffer_remove.addr(), _buffer_merge.addr(), cell_start_granular.addr(),
+        max_mass, cell_size, split_mass.addr(), split_pos.addr(),
+        split_vel.addr(), n_split, density);
 
     cudaDeviceSynchronize();
 

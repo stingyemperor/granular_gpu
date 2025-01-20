@@ -9,7 +9,8 @@ public:
                  std::shared_ptr<GranularParticles> &boundary_particles,
                  std::shared_ptr<GranularParticles> &upsampled_particles,
                  float3 space_size, float cell_length, float dt, float3 g,
-                 int3 cell_size, const float density);
+                 int3 cell_size, const float density,
+                 const float upsampled_radius);
 
   GranularSystem(const GranularSystem &) = delete;
   GranularSystem &operator=(const GranularSystem &) = delete;
@@ -21,7 +22,7 @@ public:
 
   int boundary_size() const { return (*_boundaries).size(); }
   int total_size() const {
-    return (*_particles).size() + (*_boundaries).size();
+    return (*_particles).size() + (*_boundaries).size() + (*_upsampled).size();
   }
 
   auto get_particles() const {
@@ -30,13 +31,13 @@ public:
   auto get_boundaries() const {
     return static_cast<const std::shared_ptr<GranularParticles>>(_boundaries);
   }
-
   auto get_upsampled() const {
     return static_cast<const std::shared_ptr<GranularParticles>>(_upsampled);
   }
 
   float const get_max_mass() { return _max_mass; }
   float const get_min_mass() { return _min_mass; }
+  float const get_upsampled_radius() { return _upsampled_radius; }
 
   ~GranularSystem() {
 
@@ -46,10 +47,9 @@ public:
 
 private:
   std::shared_ptr<GranularParticles> _particles;
-  std::shared_ptr<GranularParticles> _upsampled;
   const std::shared_ptr<GranularParticles> _boundaries;
+  std::shared_ptr<GranularParticles> _upsampled;
 
-  // TODO: add solver
   /**
    * @brief start index of the cell
    */
@@ -69,12 +69,21 @@ private:
   /** \brief Device array to hold the cell index of each particle*/
   DArray<int> _buffer_int;
   DArray<int> _buffer_boundary;
+  DArray<float3> _buffer_cover_vector;
 
   Solver _solver;
 
   void compute_boundary_mass();
-  void neighbor_search(const std::shared_ptr<GranularParticles> &particles,
-                       DArray<int> &cell_start);
+  void
+  neighbor_search_granular(const std::shared_ptr<GranularParticles> &particles,
+                           DArray<int> &cell_start);
+  void
+  neighbor_search_boundary(const std::shared_ptr<GranularParticles> &particles,
+                           DArray<int> &cell_start);
+  void
+  neighbor_search_upsampled(const std::shared_ptr<GranularParticles> &particles,
+                            DArray<int> &cell_start);
+
   void
   set_surface_particles(const std::shared_ptr<GranularParticles> &particles,
                         DArray<int> &cell_start);
