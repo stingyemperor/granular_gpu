@@ -18,6 +18,7 @@
 #define PI_3 1.047197551f
 #define PI_2 1.570796327f
 #define PI_3_2 0.5235987756
+__device__ __constant__ double PI_d = 3.14159265358979323846;
 
 GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &granular_particles,
@@ -476,15 +477,18 @@ void GranularSystem::compute_boundary_mass() {
 }
 
 __global__ void find_cover_vector(float3 *buffer_cover_vector,
-                                  float3 *pos_granular, const int num,
-                                  int *cell_start_granular,
-                                  const int3 cell_size,
-                                  const float cell_length) {
+                                  float3 *pos_granular, float *mass_granular,
+                                  const int num, int *cell_start_granular,
+                                  const int3 cell_size, const float cell_length,
+                                  const float density) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
     return;
   __syncthreads();
+
+  float3 c_v = make_float3(0.0f, 0.0f, 0.0f);
+  const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI_d * density));
 
   for (auto m = 0; m < 27; __syncthreads(), ++m) {
     const auto cellID = particlePos2cellIdx(
@@ -495,25 +499,36 @@ __global__ void find_cover_vector(float3 *buffer_cover_vector,
       continue;
     // calculate centroid of neighbors
     int j = cell_start_granular[cellID];
-    float3 c_v = make_float3(0.0f, 0.0f, 0.0f);
+
     while (j < cell_start_granular[cellID + 1]) {
       if (i == j) {
         j++;
         continue;
       }
+
+      const float r_j = cbrtf((3 * mass_granular[j]) / (4 * PI_d * density));
+
+      const float dis = length(pos_granular[i] - pos_granular[j]);
+
+      if (dis > 2.0 * (r_i + r_j)) {
+        j++;
+        continue;
+      }
+
       float3 b = pos_granular[i] - pos_granular[j];
       c_v += normalize(b);
       // NOTE: maybe set n_neighbors in the pbd loop
       j++;
     }
-    buffer_cover_vector[i] = c_v;
   }
+  buffer_cover_vector[i] = c_v;
 }
 
 __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
-                             float3 *pos_granular, const int num,
-                             int *cell_start_granular, const int3 cell_size,
-                             const float cell_length) {
+                             float3 *pos_granular, float *mass_granular,
+                             const int num, int *cell_start_granular,
+                             const int3 cell_size, const float cell_length,
+                             const float density) {
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
   if (i >= num)
@@ -521,6 +536,11 @@ __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
   __syncthreads();
 
   unsigned int n_neighbors = 0;
+  float3 c_v = buffer_cover_vector[i];
+  c_v = normalize(c_v);
+
+  bool boundary_vote = false;
+  const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI_d * density));
 
   for (auto m = 0; m < 27; __syncthreads(), ++m) {
     const auto cellID = particlePos2cellIdx(
@@ -531,30 +551,35 @@ __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
       continue;
     // calculate centroid of neighbors
     int j = cell_start_granular[cellID];
+
     while (j < cell_start_granular[cellID + 1]) {
       if (i == j) {
         j++;
         continue;
       }
       float3 b = pos_granular[j] - pos_granular[i];
-      b = normalize(b);
-      float3 c_v = buffer_cover_vector[j];
-      c_v = normalize(c_v);
+      const float r_j = cbrtf((3 * mass_granular[j]) / (4 * PI_d * density));
+      const float dis = length(b);
 
-      // < pi/3
-      if (dot(b, c_v) < PI_3_2) {
-        buffer_boundary[i] = 1;
-      } else {
-        buffer_boundary[i] = 0;
+      if (dis > 2.0 * (r_i + r_j)) {
+        j++;
+        continue;
       }
 
+      b = normalize(b);
+
+      if (abs(acos(dot(b, c_v))) <= PI_3_2) {
+        boundary_vote = true;
+      }
       n_neighbors++;
       j++;
     }
   }
 
-  if (n_neighbors <= 15) {
+  if (n_neighbors <= 13 || !boundary_vote) {
     buffer_boundary[i] = 1;
+  } else {
+    buffer_boundary[i] = 0;
   }
 }
 
@@ -563,15 +588,16 @@ void GranularSystem::set_surface_particles(
     DArray<int> &cell_start) {
   const int num = particles->size();
   find_cover_vector<<<(num - 1) / block_size + 1, block_size>>>(
-      _buffer_cover_vector.addr(), particles->get_pos_ptr(), num,
-      _cell_start_particle.addr(), _cell_size, _cell_length);
+      _buffer_cover_vector.addr(), particles->get_pos_ptr(),
+      particles->get_mass_ptr(), num, _cell_start_particle.addr(), _cell_size,
+      _cell_length, _density);
 
   cudaDeviceSynchronize();
 
   find_surface<<<(num - 1) / block_size + 1, block_size>>>(
       _buffer_boundary.addr(), _buffer_cover_vector.addr(),
-      particles->get_pos_ptr(), num, _cell_start_particle.addr(), _cell_size,
-      _cell_length);
+      particles->get_pos_ptr(), particles->get_mass_ptr(), num,
+      _cell_start_particle.addr(), _cell_size, _cell_length, _density);
 
   CUDA_CALL(cudaMemcpy(particles->get_surface_ptr(), _buffer_boundary.addr(),
                        sizeof(int) * particles->size(),

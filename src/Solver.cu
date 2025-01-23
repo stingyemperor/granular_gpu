@@ -252,12 +252,33 @@ __device__ void particles_constraint(float3 &del_p, int &n, int i,
       const float dis =
           norm3df(pos_p[i].x - pos_p[j].x, pos_p[i].y - pos_p[j].y,
                   pos_p[i].z - pos_p[j].z);
-      const float mag = dis - (r_i + r_j);
+      const float mag = (r_i + r_j) - dis;
 
       // TODO: add mass scaling
-      if (mag < 0.0) {
-        del_p -= inv_m_sum * inv_m_i * (mag / dis) * p_12;
-        delta_pos[j] += inv_m_sum * inv_m_j * (mag / dis) * p_12;
+      if (mag >= 0.0) {
+        // del_p -= inv_m_sum * inv_m_i * (mag / dis) * p_12;
+        // delta_pos[j] += inv_m_sum * inv_m_j * (mag / dis) * p_12;
+
+        const float3 del_p_i = -inv_m_sum * inv_m_i * (mag / dis) * p_12;
+        const float3 del_p_j = inv_m_sum * inv_m_j * (mag / dis) * p_12;
+
+        const float3 del_p_ij = del_p_i - del_p_j;
+        const float3 del_p_ij_perp =
+            del_p_ij - dot(del_p_ij, p_12) * p_12 / (dis * dis);
+
+        const float del_p_ij_perp_norm =
+            norm3df(del_p_ij_perp.x, del_p_ij_perp.y, del_p_ij_perp.z);
+
+        const float min_fric =
+            min((r_i + r_j) * 0.5 / del_p_ij_perp_norm, 1.0f);
+
+        if (del_p_ij_perp_norm < (r_i + r_j) * 0.5) {
+          del_p -= inv_m_sum * inv_m_i * del_p_ij;
+          delta_pos[j] += inv_m_sum * inv_m_i * del_p_ij;
+        } else {
+          del_p -= inv_m_sum * inv_m_i * del_p_ij * min_fric;
+          delta_pos[j] += inv_m_sum * inv_m_i * del_p_ij * min_fric;
+        }
 
         n++;
         n_constraints[j]++;
@@ -809,12 +830,12 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     DArray<float3> split_pos(1000);
     DArray<float3> split_vel(1000);
 
-    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), particles->get_surface_ptr(),
-        _buffer_remove.addr(), _buffer_merge.addr(), cell_start_granular.addr(),
-        max_mass, cell_size, split_mass.addr(), split_pos.addr(),
-        split_vel.addr(), n_split, density);
+    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+    //     particles->get_vel_ptr(), particles->get_surface_ptr(),
+    //     _buffer_remove.addr(), _buffer_merge.addr(),
+    //     cell_start_granular.addr(), max_mass, cell_size, split_mass.addr(),
+    //     split_pos.addr(), split_vel.addr(), n_split, density);
 
     cudaDeviceSynchronize();
 
