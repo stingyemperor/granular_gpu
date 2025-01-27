@@ -70,6 +70,7 @@ private:
   DArray<int> _buffer_int;
   DArray<int> _buffer_boundary;
   DArray<float3> _buffer_cover_vector;
+  DArray<int> _buffer_num_surface_neighbors;
 
   Solver _solver;
 

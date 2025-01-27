@@ -5,7 +5,7 @@ class GranularParticles final : public Particles {
 public:
   explicit GranularParticles(const std::vector<float3> &p)
       : Particles(p), _mass(p.size()), _scaled_mass(p.size()),
-        _surface(p.size()), _particle_2_cell(p.size()) {
+        _surface(p.size()), _particle_2_cell(p.size()), _num_surface(p.size()) {
     CUDA_CALL(cudaMemcpy(_pos.addr(), &p[0], sizeof(float3) * p.size(),
                          cudaMemcpyHostToDevice));
   }
@@ -18,6 +18,7 @@ public:
   float *get_mass_ptr() const { return _mass.addr(); }
   float *get_scaled_mass_ptr() const { return _scaled_mass.addr(); }
   int *get_surface_ptr() const { return _surface.addr(); }
+  int *get_num_surface_ptr() const { return _num_surface.addr(); }
 
   const DArray<float> &get_mass() const { return _mass; }
 
@@ -41,5 +42,6 @@ protected:
   DArray<float> _mass;
   DArray<float> _scaled_mass;
   DArray<int> _surface;
+  DArray<int> _num_surface;
   DArray<int> _particle_2_cell; // lookup key
 };

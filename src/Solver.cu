@@ -25,6 +25,8 @@
 __device__ __constant__ double pi = 3.14159265358979323846;
 #define EPSILON_m 1e-4f // Small threshold for comparison
 
+int t_merge_iter = 0;
+
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
   const unsigned int length = _num_constraints.length();
@@ -219,7 +221,7 @@ __device__ void boundary_constraint(float3 &del_p, int &n, int i,
     const float dis = norm3df(pos_p.x - pos_b[j].x, pos_p.y - pos_b[j].y,
                               pos_p.z - pos_b[j].z);
 
-    const float r_i = cbrtf((3 * m[i]) / (4 * pi * density));
+    const float r_i = max(cbrtf((3 * m[i]) / (4 * pi * density)), 0.01f);
     const float mag = dis - (0.01 + r_i);
     const float3 p_12 = pos_p - pos_b[j];
     if (mag < 0.0) {
@@ -443,134 +445,10 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
   }
 }
 
-__device__ void viable_merge(const int i, int j, const int cell_end,
-                             const float *m, const int *surface,
-                             const int *remove, const float max_mass, int &n,
-                             int *n_indices) {
-  while (j < cell_end) {
-    if (i != j) {
-      if (remove[j] == 1) {
-        n++;
-      }
-    }
-    ++j;
-  }
-}
-
-// __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
-//                                float *mass_granular, int *surface, int
-//                                *remove, float *merge, int
-//                                *cell_start_granular, float max_mass, const
-//                                int3 cell_size, const float cell_length) {
-//
-//   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-//   // Bounds check
-//   if (i >= num) {
-//     return;
-//   }
-//
-//   // Validate input data
-//   if (!pos_granular || !mass_granular || !surface || !remove || !merge ||
-//       !cell_start_granular) {
-//     printf("Kernel error: null pointer detected\n");
-//     return;
-//   }
-//
-//   // Only merge if the particle is not a surface particle, not marked to be
-//   // removed and not marked to be merged
-//   if (surface[i] == 0 && atomicOr(&remove[i], 0) == 0) {
-//     float closest_dis = 1000.0f;
-//     int closest_index = -1;
-//
-// #pragma unroll
-//     // Loop through the 27 neighboring cells
-//     for (auto m = 0; m < 27; __syncthreads(), ++m) {
-//       const auto cellID = particlePos2cellIdx(
-//           make_int3(pos_granular[i] / cell_length) +
-//               make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
-//           cell_size);
-//
-//       if (cellID >= cell_size.x * cell_size.y * cell_size.z) {
-//         printf("Invalid cell ID computed for particle %d\n", i);
-//         return;
-//       }
-//
-//       if (cellID == (cell_size.x * cell_size.y * cell_size.z))
-//         continue;
-//
-//       int j = cell_start_granular[cellID];
-//       while (j < cell_start_granular[cellID + 1] && j < num) {
-//         // Add debug print when we encounter a merging particle
-//         if (atomicOr(&remove[j], 0) != 0) {
-//           printf("Particle %d encountered particle %d which has remove flag =
-//           "
-//                  "%d and mass = %f\n",
-//                  i, j, remove[j], mass_granular[j]);
-//         }
-//         // if j is marked for removal or marked to be merged or a surface
-//         // particle
-//         if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] == 1) {
-//           j++;
-//           continue;
-//         }
-//
-//         const bool mass_check = mass_granular[j] <= max_mass -
-//         mass_granular[i];
-//
-//         if (!mass_check) {
-//           atomicAdd(&j, 1);
-//           continue;
-//         }
-//
-//         const float3 p_i = pos_granular[i];
-//         const float3 p_j = pos_granular[j];
-//
-//         const float dis =
-//             norm3df((p_i.x - p_j.x), (p_i.y - p_j.y), (p_i.z - p_j.z));
-//
-//         if (dis < closest_dis) {
-//           closest_dis = dis;
-//           atomicExch(&closest_index, j);
-//         }
-//         atomicAdd(&j, 1);
-//       }
-//     }
-//
-//     // we found a viable candidate
-//     if (closest_index != -1) {
-//       // Try to mark both particles atomically
-//       if (atomicCAS(&remove[i], 0, -1) == 0) { // First try to mark i
-//         if (atomicCAS(&remove[closest_index], 0, -1) ==
-//             0) { // Then try to mark closest_index
-//           // Both particles were successfully marked
-//           atomicExch(&merge[closest_index], mass_granular[i]);
-//           atomicExch(&merge[i], -mass_granular[i]);
-//           printf("Setting up merge: particle %d (mass %.3f) -> particle %d "
-//                  "(mass %.3f), delta: %f and %f\n",
-//                  i, mass_granular[i], closest_index,
-//                  mass_granular[closest_index], mass_granular[i],
-//                  -mass_granular[i]);
-//         } else {
-//           // Failed to mark closest_index, revert i's marking
-//           atomicExch(&remove[i], 0);
-//         }
-//       }
-//     }
-//
-//     // Try to atomically acquire the merge lock
-//     // if (atomicCAS(&remove[closest_index], 0, -1) == 0) {
-//     //   atomicExch(&remove[i], 1);
-//     //   // NOTE: ??
-//     //   // atomicExch(&merge[i], closest_index);
-//     //   merge[closest_index] = mass_granular[i];
-//     // }
-//   }
-//   return;
-// }
-
 __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
                                float *mass_granular, float3 *vel_granular,
-                               int *surface, int *remove, float *merge,
+                               int *surface, int *num_surface_neighbors,
+                               int *remove, float *merge,
                                float3 *merge_velocity, int *cell_start_granular,
                                float max_mass, const int3 cell_size,
                                const float cell_length) {
@@ -579,8 +457,13 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
     return;
 
   // Only non-surface particles that aren't already marked
-  if (surface[i] != 0 || atomicOr(&remove[i], 0) != 0)
+  // if (surface[i] != 0 || atomicOr(&remove[i], 0) != 0 ||
+  //     num_surface_neighbors[i] > 3)
+  //   return;
+
+  if (surface[i] != 0 || atomicOr(&remove[i], 0) != 0) {
     return;
+  }
 
   float3 pos_i = pos_granular[i];
   float mass_i = mass_granular[i];
@@ -600,6 +483,9 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
 
     int j = cell_start_granular[cellID];
     while (j < cell_start_granular[cellID + 1] && j < num) {
+      // if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0 ||
+      //     num_surface_neighbors[j] > 3) {
+      //
       if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0) {
         j++;
         continue;
@@ -613,9 +499,10 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
       }
 
       float3 p_j = pos_granular[j];
-      float dis = norm3df(pos_i.x - p_j.x, pos_i.y - p_j.y, pos_i.z - p_j.z);
+      float dis = length(pos_i - p_j);
+      // float dis = norm3df(pos_i.x - p_j.x, pos_i.y - p_j.y, pos_i.z - p_j.z);
 
-      if (dis < 0.05) {
+      if (dis < 0.035) {
         if (dis < closest_dis) {
           closest_dis = dis;
           closest_index = j;
@@ -670,7 +557,7 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
     int old_count = atomicAdd(&merge_count[i], 1);
     const float delta = mass_del[i] / blend_factor;
     const float3 delta_vel = vel_del[i] / blend_factor;
-    atomicAdd(&mass_granular[i], delta);
+    mass_granular[i] += delta;
     vel_granular[i] += delta_vel;
 
     // Debug
@@ -691,9 +578,9 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
       }
       atomicExch(&merge_count[i], 0);
       atomicExch(&mass_del[i], 0.0f);
-      vel_granular[i].x = 0;
-      vel_granular[i].y = 0;
-      vel_granular[i].z = 0;
+      // vel_granular[i].x = 0;
+      // vel_granular[i].y = 0;
+      // vel_granular[i].z = 0;
     }
   }
 }
@@ -774,12 +661,17 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     cudaError_t err = cudaSuccess;
 
     // Run merge kernel
-    merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), particles->get_surface_ptr(),
-        _buffer_remove.addr(), _buffer_merge.addr(),
-        _buffer_merge_velocity.addr(), cell_start_granular.addr(), max_mass,
-        cell_size, cell_length);
+    if (t_merge_iter == 1) {
+      merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+          num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+          particles->get_vel_ptr(), particles->get_surface_ptr(),
+          particles->get_num_surface_ptr(), _buffer_remove.addr(),
+          _buffer_merge.addr(), _buffer_merge_velocity.addr(),
+          cell_start_granular.addr(), max_mass, cell_size, cell_length);
+
+      t_merge_iter = 0;
+    }
+    t_merge_iter++;
 
     cudaDeviceSynchronize();
 
@@ -888,10 +780,10 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     CUDA_CALL(cudaDeviceSynchronize());
 
     // add elements
-    particles->add_elements(split_mass, split_pos, split_vel, n_split);
-    _buffer_merge_count.resize(particles->size());
-    _buffer_merge.resize(particles->size());
-    _buffer_remove.resize(particles->size());
+    // particles->add_elements(split_mass, split_pos, split_vel, n_split);
+    // _buffer_merge_count.resize(particles->size());
+    // _buffer_merge.resize(particles->size());
+    // _buffer_remove.resize(particles->size());
 
     cudaDeviceSynchronize();
 

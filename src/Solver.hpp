@@ -8,13 +8,14 @@
 class Solver {
 public:
   Solver(const std::shared_ptr<GranularParticles> &particles)
-      : _max_iter(5), _blend_factor(4), _buffer_int(particles->size()),
+      : _max_iter(6), _blend_factor(50), _buffer_int(particles->size()),
         _buffer_float(particles->size()), _buffer_float3(particles->size()),
         _pos_t(particles->size()), _num_constraints(particles->size()),
         _buffer_remove(particles->size()), _buffer_split(particles->size()),
         _buffer_merge(particles->size()),
         _buffer_merge_velocity(particles->size()),
-        _buffer_merge_count(particles->size()) {
+        _buffer_merge_count(particles->size()),
+        _buffer_merged_last_step(particles->size()) {
 
     thrust::device_ptr<int> thrust_remove =
         thrust::device_pointer_cast(_buffer_remove.addr());
@@ -36,6 +37,9 @@ public:
         thrust::device_pointer_cast(_buffer_merge_velocity.addr());
     thrust::fill(thrust::device, thrust_merge_velocity,
                  thrust_merge_velocity + particles->size(), zero);
+
+    thrust::fill(thrust::device, _buffer_merged_last_step.addr(),
+                 _buffer_merged_last_step.addr() + particles->size(), 0);
   }
 
   void step(std::shared_ptr<GranularParticles> &paticles,
@@ -92,4 +96,5 @@ private:
   DArray<float> _buffer_merge;
   DArray<float3> _buffer_merge_velocity;
   DArray<int> _buffer_merge_count;
+  DArray<int> _buffer_merged_last_step;
 };

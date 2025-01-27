@@ -593,3 +593,11 @@ int main(int argc, char *argv[]) {
   }
   return 0;
 }
+
+// thrust::fill(thrust::device, _buffer_num_surface_neighbors.addr(),
+//              _buffer_num_surface_neighbors.addr() + num, 0);
+
+// find_num_surface_neighbors<<<(num - 1) / block_size + 1, block_size>>>(
+//     _buffer_num_surface_neighbors.addr(), particles->get_pos_ptr(),
+//     particles->get_mass_ptr(), num, _cell_start_particle.addr(), _cell_size,
+//     _cell_length, _density, _buffer_boundary.addr());
