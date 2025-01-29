@@ -9,6 +9,7 @@
 #include <memory>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
+#include <thrust/gather.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
 #include <vector_functions.h>
@@ -18,6 +19,7 @@
 #define PI_3 1.047197551f
 #define PI_2 1.570796327f
 #define PI_3_2 0.5235987756
+#define PI_3_4 0.2617993878
 __device__ __constant__ double PI_d = 3.14159265358979323846;
 
 GranularSystem::GranularSystem(
@@ -38,7 +40,7 @@ GranularSystem::GranularSystem(
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _density(density), _max_mass(4), _min_mass(1),
+      _density(density), _max_mass(8), _min_mass(1),
       _upsampled_radius(upsampled_radius), _buffer_boundary(_particles->size()),
       _buffer_cover_vector(_particles->size()),
       _buffer_num_surface_neighbors(_particles->size()) {
@@ -57,113 +59,85 @@ void GranularSystem::neighbor_search_granular(
     const std::shared_ptr<GranularParticles> &particles,
     DArray<int> &cell_start) {
   int num = particles->size();
-  std::cout << "Starting neighbor search for " << num << " particles"
-            << std::endl;
 
-  // Debug check array sizes
-  std::cout << "Buffer int size: " << _buffer_int.length() << std::endl;
-  std::cout << "Cell start size: " << cell_start.length() << std::endl;
+  // Create and initialize indices array
+  DArray<int> particle_indices(num);
+  thrust::sequence(thrust::device, particle_indices.addr(),
+                   particle_indices.addr() + num);
 
-  // Verify memory state
-  size_t free_mem, total_mem;
-  cudaMemGetInfo(&free_mem, &total_mem);
-  // std::cout << "GPU Memory - Free: " << free_mem / 1024 / 1024
-  //           << "MB, Total: " << total_mem / 1024 / 1024 << "MB" << std::endl;
-
-  // Debug sync point before kernel launch
-  cudaError_t err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    std::cerr << "Pre-kernel sync error: " << cudaGetErrorString(err)
-              << std::endl;
-    throw std::runtime_error("CUDA sync error before mapParticles2Cells");
-  }
-
-  // map the particles to their cell idx
+  // Map particles to cells
   mapParticles2Cells_CUDA<<<(num - 1) / block_size + 1, block_size>>>(
       particles->get_particle_2_cell(), particles->get_pos_ptr(), _cell_length,
       _cell_size, num);
 
-  // Check for kernel errors
-  err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    std::cerr << "Kernel launch error: " << cudaGetErrorString(err)
+  // Copy cell indices for sorting
+  CUDA_CALL(cudaMemcpy(_buffer_int.addr(), particles->get_particle_2_cell(),
+                       sizeof(int) * num, cudaMemcpyDeviceToDevice));
+
+  // Sort positions and indices by cell
+  thrust::sort_by_key(thrust::device, _buffer_int.addr(),
+                      _buffer_int.addr() + num,
+                      thrust::make_zip_iterator(thrust::make_tuple(
+                          particles->get_pos_ptr(), particle_indices.addr())));
+
+  // Create temporary arrays for all properties that need sorting
+  DArray<float3> temp_vel(num);
+  DArray<float> temp_mass(num);
+  DArray<float> temp_merge(num);
+  DArray<int> temp_merge_count(num);
+  DArray<int> temp_remove(num);
+
+  try {
+    // Sort velocities
+    thrust::gather(thrust::device, particle_indices.addr(),
+                   particle_indices.addr() + num, particles->get_vel_ptr(),
+                   temp_vel.addr());
+    CUDA_CALL(cudaMemcpy(particles->get_vel_ptr(), temp_vel.addr(),
+                         sizeof(float3) * num, cudaMemcpyDeviceToDevice));
+
+    // Sort masses
+    thrust::gather(thrust::device, particle_indices.addr(),
+                   particle_indices.addr() + num, particles->get_mass_ptr(),
+                   temp_mass.addr());
+    CUDA_CALL(cudaMemcpy(particles->get_mass_ptr(), temp_mass.addr(),
+                         sizeof(float) * num, cudaMemcpyDeviceToDevice));
+
+    // Sort solver buffers
+    _solver.resize(num);
+
+    // Sort merge buffer
+    thrust::gather(thrust::device, particle_indices.addr(),
+                   particle_indices.addr() + num,
+                   _solver.get_buffer_merge_ptr(), temp_merge.addr());
+    CUDA_CALL(cudaMemcpy(_solver.get_buffer_merge_ptr(), temp_merge.addr(),
+                         sizeof(float) * num, cudaMemcpyDeviceToDevice));
+
+    // Sort merge count buffer
+    thrust::gather(
+        thrust::device, particle_indices.addr(), particle_indices.addr() + num,
+        _solver.get_buffer_merge_count_ptr(), temp_merge_count.addr());
+    CUDA_CALL(cudaMemcpy(_solver.get_buffer_merge_count_ptr(),
+                         temp_merge_count.addr(), sizeof(int) * num,
+                         cudaMemcpyDeviceToDevice));
+
+    // Sort remove buffer
+    thrust::gather(thrust::device, particle_indices.addr(),
+                   particle_indices.addr() + num,
+                   _solver.get_buffer_remove_ptr(), temp_remove.addr());
+    CUDA_CALL(cudaMemcpy(_solver.get_buffer_remove_ptr(), temp_remove.addr(),
+                         sizeof(int) * num, cudaMemcpyDeviceToDevice));
+
+  } catch (const std::exception &e) {
+    std::cerr << "Error in sorting particle properties: " << e.what()
               << std::endl;
-    throw std::runtime_error("CUDA kernel error in mapParticles2Cells");
-  }
-
-  err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    std::cerr << "Kernel sync error: " << cudaGetErrorString(err) << std::endl;
-    throw std::runtime_error("CUDA sync error after mapParticles2Cells");
-  }
-
-  // copy the cell indexes to _buffer_int with error checking
-  try {
-    CUDA_CALL(cudaMemcpy(_buffer_int.addr(), particles->get_particle_2_cell(),
-                         sizeof(int) * num, cudaMemcpyDeviceToDevice));
-  } catch (const std::exception &e) {
-    std::cerr << "Error copying to buffer_int: " << e.what() << std::endl;
     throw;
   }
 
-  // sort the position with the cell indexes
-  try {
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num, particles->get_pos_ptr());
-  } catch (const std::exception &e) {
-    std::cerr << "Error in sort_by_key: " << e.what() << std::endl;
-    throw;
-  }
+  // Update particle_2_cell with sorted cell indices
+  CUDA_CALL(cudaMemcpy(particles->get_particle_2_cell(), _buffer_int.addr(),
+                       sizeof(int) * num, cudaMemcpyDeviceToDevice));
 
-  // copy the new sorted indexes back to _buffer_int
-  try {
-    CUDA_CALL(cudaMemcpy(_buffer_int.addr(), particles->get_particle_2_cell(),
-                         sizeof(int) * num, cudaMemcpyDeviceToDevice));
-  } catch (const std::exception &e) {
-    std::cerr << "Error copying back to buffer_int: " << e.what() << std::endl;
-    throw;
-  }
-
-  // sort velocity based on the keys
-  try {
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num, particles->get_vel_ptr());
-  } catch (const std::exception &e) {
-    std::cerr << "Error in velocity sort_by_key: " << e.what() << std::endl;
-    throw;
-  }
-
-  // sort mass based on the keys
-  try {
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num, particles->get_mass_ptr());
-  } catch (const std::exception &e) {
-    std::cerr << "Error in mass sort_by_key: " << e.what() << std::endl;
-    throw;
-  }
-
-  // sort solver buffers based on the keys
-  try {
-
-    _solver.resize(particles->size());
-
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num,
-                        _solver.get_buffer_merge_ptr());
-
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num,
-                        _solver.get_buffer_merge_count_ptr());
-
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num,
-                        _solver.get_buffer_remove_ptr());
-  } catch (const std::exception &e) {
-    std::cerr << "Error in solver sort_by_key: " << e.what() << std::endl;
-    throw;
-  }
-
-  // fill cell_start with zeroes
+  // Initialize cell start array
   try {
     thrust::fill(
         thrust::device, cell_start.addr(),
@@ -173,19 +147,11 @@ void GranularSystem::neighbor_search_granular(
     throw;
   }
 
-  // add number of particles per cell index to cell_start
+  // Count particles per cell
   countingInCell_CUDA<<<(num - 1) / block_size + 1, block_size>>>(
       cell_start.addr(), particles->get_particle_2_cell(), num);
 
-  // Check for kernel errors
-  err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    std::cerr << "countingInCell kernel error: " << cudaGetErrorString(err)
-              << std::endl;
-    throw std::runtime_error("CUDA kernel error in countingInCell");
-  }
-
-  // calculate the prefix sum of cell_start
+  // Calculate prefix sum for cell start array
   try {
     thrust::exclusive_scan(thrust::device, cell_start.addr(),
                            cell_start.addr() +
@@ -196,26 +162,18 @@ void GranularSystem::neighbor_search_granular(
     throw;
   }
 
-  // Final sync point
-  err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    std::cerr << "Final sync error: " << cudaGetErrorString(err) << std::endl;
-    throw std::runtime_error("CUDA sync error at end of neighbor_search");
-  }
+  cudaDeviceSynchronize();
 }
-
 void GranularSystem::neighbor_search_boundary(
     const std::shared_ptr<GranularParticles> &particles,
     DArray<int> &cell_start) {
   int num = particles->size();
-  std::cout << "Starting neighbor search for " << num << " particles"
-            << std::endl;
+  // std::cout << "Starting neighbor search for " << num << " particles"
+  //           << std::endl;
 
   // Verify memory state
   size_t free_mem, total_mem;
   cudaMemGetInfo(&free_mem, &total_mem);
-  // std::cout << "GPU Memory - Free: " << free_mem / 1024 / 1024
-  //           << "MB, Total: " << total_mem / 1024 / 1024 << "MB" << std::endl;
 
   // Debug sync point before kernel launch
   cudaError_t err = cudaDeviceSynchronize();
@@ -441,14 +399,21 @@ float GranularSystem::step() {
                  _cell_start_boundary, _space_size, _cell_size, _cell_length,
                  _dt, _g, _density);
 
-    // cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
     CHECK_KERNEL();
-    set_surface_particles(_particles, _cell_start_particle);
+
+    // _solver.upsampled_update(_paricles, _boundaries, _upsampled,
+    //                          _cell_start_upsampled, _cell_start_particle,
+    //                          _cell_start_boundary, _cell_size, _space_size,
+    //                          _cell_length, _density);
+
+    // set_surface_particles(_particles, _cell_start_particle);
 
     cudaDeviceSynchronize();
 
-    _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
-                              _cell_size, _space_size, _cell_length, _density);
+    // _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
+    //                           _cell_size, _space_size, _cell_length,
+    //                           _density);
 
   } catch (const char *s) {
     std::cout << s << "\n";
@@ -613,7 +578,7 @@ __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
 
       b = normalize(b);
 
-      if (abs(acos(dot(b, c_v))) <= PI_3_2) {
+      if (abs(acos(dot(b, c_v))) <= PI_3) {
         boundary_vote = true;
       }
       n_neighbors++;
@@ -621,7 +586,7 @@ __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
     }
   }
 
-  if (n_neighbors <= 13 || !boundary_vote) {
+  if (n_neighbors <= 5 || !boundary_vote) {
     buffer_boundary[i] = 1;
   } else {
     buffer_boundary[i] = 0;

@@ -167,6 +167,75 @@ public:
     _length -= count;
   }
 
+  static void verifyArrayOrdering(const std::vector<DArray<T> *> &arrays,
+                                  const DArray<int> &removal_flags,
+                                  const char *arrayNames[]) {
+    if (arrays.empty())
+      return;
+
+    const unsigned int length = arrays[0]->length();
+
+    // Verify all arrays have same length
+    for (size_t i = 1; i < arrays.size(); i++) {
+      if (arrays[i]->length() != length) {
+        throw std::runtime_error(std::string("Array length mismatch between ") +
+                                 arrayNames[0] + " and " + arrayNames[i]);
+      }
+    }
+
+    // Create host vectors for verification
+    std::vector<std::vector<T>> initial_data(arrays.size());
+    std::vector<std::vector<T>> final_data(arrays.size());
+    std::vector<int> remove_flags(length);
+
+    // Copy initial data and removal flags to host
+    for (size_t i = 0; i < arrays.size(); i++) {
+      initial_data[i].resize(length);
+      CUDA_CALL(cudaMemcpy(initial_data[i].data(), arrays[i]->addr(),
+                           sizeof(T) * length, cudaMemcpyDeviceToHost));
+    }
+    CUDA_CALL(cudaMemcpy(remove_flags.data(), removal_flags.addr(),
+                         sizeof(int) * length, cudaMemcpyDeviceToHost));
+
+    // Perform compaction
+    for (auto arr : arrays) {
+      arr->compact(removal_flags);
+    }
+
+    // Copy final data to host
+    const unsigned int new_length = arrays[0]->length();
+    for (size_t i = 0; i < arrays.size(); i++) {
+      if (arrays[i]->length() != new_length) {
+        throw std::runtime_error("Inconsistent lengths after compaction");
+      }
+      final_data[i].resize(new_length);
+      CUDA_CALL(cudaMemcpy(final_data[i].data(), arrays[i]->addr(),
+                           sizeof(T) * new_length, cudaMemcpyDeviceToHost));
+    }
+
+    // Verify ordering is maintained
+    std::vector<int> surviving_indices;
+    for (unsigned int i = 0; i < length; i++) {
+      if (remove_flags[i] != 1) {
+        surviving_indices.push_back(i);
+      }
+    }
+
+    for (unsigned int i = 0; i < new_length; i++) {
+      int old_idx = surviving_indices[i];
+      for (size_t arr_idx = 0; arr_idx < arrays.size(); arr_idx++) {
+        if (memcmp(&final_data[arr_idx][i], &initial_data[arr_idx][old_idx],
+                   sizeof(T)) != 0) {
+          std::cerr << "Order mismatch in " << arrayNames[arr_idx]
+                    << " at index " << i << " (original index " << old_idx
+                    << ")" << std::endl;
+          throw std::runtime_error(
+              "Array ordering not maintained during compaction");
+        }
+      }
+    }
+  }
+
 public:
   T *_addr;
   unsigned int _length;
