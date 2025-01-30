@@ -11,6 +11,7 @@ find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(GLUT REQUIRED)
 
+
 # Set the source directory
 set(SOURCE_DIR "${PROJECT_SOURCE_DIR}/src")
 
@@ -78,11 +79,11 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
 
 # Find Thrust (usually comes with CUDA)
-find_package(Thrust REQUIRED CONFIG)
-thrust_create_target(Thrust)
+# find_package(Thrust REQUIRED CONFIG)
+# thrust_create_target(Thrust)
 
 # Link Thrust to our target
-target_link_libraries(main PRIVATE Thrust)
+# target_link_libraries(main PRIVATE Thrust)
 
 
 # Debug messages

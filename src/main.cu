@@ -423,10 +423,8 @@ void initGL(void) {
                        "pointSize");
   ShaderUtility::attachAndLinkProgram(
       m_particles_program,
-      ShaderUtility::loadShaders("/home/bliss/Documents/gpu_projects/"
-                                 "granular_gpu/src/shaders/particles.vert",
-                                 "/home/bliss/Documents/gpu_projects/"
-                                 "granular_gpu/src/shaders/particles.frag"));
+      ShaderUtility::loadShaders("src/shaders/particles.vert",
+                                 "src/shaders/particles.frag"));
   return;
 }
 
@@ -492,7 +490,10 @@ static void displayFunc(void) {
   // ----------------------------------------------------------------
   glUseProgram(m_particles_program);
   // Scale for point sprites
-  float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) / 180.0f);
+
+  float uniformVal = (m_window_h / 1920.0f) * (1080.0f / tanf(m_fov * 0.5f * float(M_PI) / 180.0f));
+
+  // float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) / 180.0f);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointScale"),
               uniformVal);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
