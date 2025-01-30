@@ -688,7 +688,7 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     cudaError_t err = cudaSuccess;
 
     // Run merge kernel
-    if (t_merge_iter == 4) {
+    if (t_merge_iter == 8) {
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),
@@ -711,8 +711,8 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
-      std::cerr << "Kernel execution failed: " << cudaGetErrorString(err)
-                << std::endl;
+      std::cerr << "Kernel execution failed: " << cudaGetErrorString(err);
+      // << std::endl;
       throw std::runtime_error("Kernel execution failed");
     }
 

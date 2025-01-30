@@ -40,7 +40,7 @@ GranularSystem::GranularSystem(
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _density(density), _max_mass(8), _min_mass(1),
+      _density(density), _max_mass(4), _min_mass(1),
       _upsampled_radius(upsampled_radius), _buffer_boundary(_particles->size()),
       _buffer_cover_vector(_particles->size()),
       _buffer_num_surface_neighbors(_particles->size()) {
@@ -407,13 +407,12 @@ float GranularSystem::step() {
     //                          _cell_start_boundary, _cell_size, _space_size,
     //                          _cell_length, _density);
 
-    // set_surface_particles(_particles, _cell_start_particle);
+    set_surface_particles(_particles, _cell_start_particle);
 
     cudaDeviceSynchronize();
 
-    // _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
-    //                           _cell_size, _space_size, _cell_length,
-    //                           _density);
+    _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
+                              _cell_size, _space_size, _cell_length, _density);
 
   } catch (const char *s) {
     std::cout << s << "\n";
@@ -429,6 +428,7 @@ float GranularSystem::step() {
   CUDA_CALL(cudaEventDestroy(start));
   CUDA_CALL(cudaEventDestroy(stop));
 
+  frame_times.push_back(milliseconds); // Store the frame time
   std::cout << "Frame time : " << milliseconds << "\n";
 
   // return milliseconds;

@@ -39,6 +39,8 @@ public:
   float const get_min_mass() { return _min_mass; }
   float const get_upsampled_radius() { return _upsampled_radius; }
 
+  const std::vector<float> &get_frame_times() const { return frame_times; }
+
   ~GranularSystem() {
 
     // Force synchronization
@@ -71,6 +73,7 @@ private:
   DArray<int> _buffer_boundary;
   DArray<float3> _buffer_cover_vector;
   DArray<int> _buffer_num_surface_neighbors;
+  std::vector<float> frame_times; // Store frame times
 
   Solver _solver;
 

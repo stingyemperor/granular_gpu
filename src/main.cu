@@ -6,6 +6,7 @@
 #include <GL/freeglut.h>
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -39,7 +40,8 @@ bool show_surface = false;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
-const float3 space_size = make_float3(1.5f, 1.5f, 1.5f);
+// const float3 space_size = make_float3(1.8f, 1.8f, 1.8f);
+const float3 space_size = make_float3(1.0f, 1.5f, 1.0f);
 const float dt = 0.002f;
 const float3 G = make_float3(0.0f, -9.8f, 0.0f);
 const float sphSpacing = 0.02f;
@@ -51,13 +53,33 @@ const int3 cell_size = make_int3(ceil(space_size.x / cell_length),
                                  ceil(space_size.y / cell_length),
                                  ceil(space_size.z / cell_length));
 
+struct SceneConfig {
+  float3 space_size;
+  float dt;
+  float3 G;
+  float sphSpacing;
+  float initSpacing;
+  float smoothing_radius;
+  float cell_length;
+  int3 cell_size;
+  float density;
+};
+
+void saveFrameTimes(const std::vector<float> &frame_times) {
+  std::ofstream outFile("frame_times_adaptive.txt");
+  for (float time : frame_times) {
+    outFile << time << "\n";
+  }
+  outFile.close();
+}
+
 void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
   std::vector<float3> pos;
   // 36 24 24
-  for (auto i = 0; i < 45; ++i) {
-    for (auto j = 0; j < 30; ++j) {
-      for (auto k = 0; k < 30; ++k) {
+  for (auto i = 0; i < 36; ++i) {
+    for (auto j = 0; j < 24; ++j) {
+      for (auto k = 0; k < 24; ++k) {
         auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
                              0.17f + initSpacing * k);
         pos.push_back(x);
@@ -210,8 +232,10 @@ void onClose(void) {
   deleteVBO(&upsampledParticlesVBO);
   deleteVBO(&upsampledParticlesColorVBO);
 
+  saveFrameTimes(p_system->get_frame_times());
   p_system = nullptr;
   CUDA_CALL(cudaDeviceReset());
+
   exit(0);
 }
 
@@ -488,7 +512,7 @@ static void displayFunc(void) {
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
-  renderUpsampledParticles();
+  // renderUpsampledParticles();
 
   glPopMatrix();
   glPopMatrix();
