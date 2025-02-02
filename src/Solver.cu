@@ -964,7 +964,7 @@ __global__ void update_upsampled_cuda(
   float max_w_ij = 0.0f;
   float alpha_i = 0.0f;
   const float3 g_t = make_float3(0.0f, -9.8f, 0.0f);
-  const float d_t = 0.01f;
+  const float d_t = 0.001f;
 
 #pragma unroll
   for (auto m = 0; m < 27; __syncthreads(), ++m) {
@@ -1006,7 +1006,7 @@ __global__ void update_upsampled_cuda(
     // }
   }
 
-  if (total_weight = 0) {
+  if (total_weight == 0) {
     vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
     pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
     return;

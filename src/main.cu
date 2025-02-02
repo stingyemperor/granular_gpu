@@ -491,9 +491,10 @@ static void displayFunc(void) {
   glUseProgram(m_particles_program);
   // Scale for point sprites
 
-  float uniformVal = (m_window_h / 1920.0f) * (1080.0f / tanf(m_fov * 0.5f * float(M_PI) / 180.0f));
+  // float uniformVal = (m_window_h / 1920.0f) * (1080.0f / tanf(m_fov * 0.5f *
+  // float(M_PI) / 180.0f));
 
-  // float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) / 180.0f);
+  float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) / 180.0f);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointScale"),
               uniformVal);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
@@ -513,7 +514,7 @@ static void displayFunc(void) {
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
-  // renderUpsampledParticles();
+  renderUpsampledParticles();
 
   glPopMatrix();
   glPopMatrix();
