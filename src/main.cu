@@ -6,6 +6,7 @@
 #include <GL/freeglut.h>
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -40,8 +41,8 @@ bool show_surface = false;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
-// const float3 space_size = make_float3(1.8f, 1.8f, 1.8f);
-const float3 space_size = make_float3(1.0f, 1.5f, 1.0f);
+const float3 space_size = make_float3(1.8f, 1.8f, 1.8f);
+// const float3 space_size = make_float3(1.5f, 1.5f, 1.5f);
 const float dt = 0.002f;
 const float3 G = make_float3(0.0f, -9.8f, 0.0f);
 const float sphSpacing = 0.02f;
@@ -73,13 +74,39 @@ void saveFrameTimes(const std::vector<float> &frame_times) {
   outFile.close();
 }
 
+void saveUpsampledPositionsToCSV(
+    const std::shared_ptr<GranularParticles> &upsampled_particles,
+    int frameId) {
+  // Create filename with frame number
+  std::string filename = "data/" + std::to_string(frameId) + ".csv";
+  std::ofstream outFile(filename);
+
+  if (!outFile.is_open()) {
+    std::cerr << "Failed to open file: " << filename << std::endl;
+    return;
+  }
+
+  // Get positions from device
+  std::vector<float3> positions(upsampled_particles->size());
+  CUDA_CALL(cudaMemcpy(positions.data(), upsampled_particles->get_pos_ptr(),
+                       positions.size() * sizeof(float3),
+                       cudaMemcpyDeviceToHost));
+
+  // Write positions to CSV
+  for (const auto &pos : positions) {
+    outFile << pos.x << "," << pos.y << "," << pos.z << "\n";
+  }
+
+  outFile.close();
+}
+
 void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
   std::vector<float3> pos;
   // 36 24 24
-  for (auto i = 0; i < 36; ++i) {
-    for (auto j = 0; j < 24; ++j) {
-      for (auto k = 0; k < 24; ++k) {
+  for (auto i = 0; i < 50; ++i) {
+    for (auto j = 0; j < 25; ++j) {
+      for (auto k = 0; k < 25; ++k) {
         auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
                              0.17f + initSpacing * k);
         pos.push_back(x);
@@ -396,6 +423,7 @@ void renderUpsampledParticles(void) {
 }
 
 void one_step() {
+  saveUpsampledPositionsToCSV(p_system->get_upsampled(), frameId);
   ++frameId;
   p_system->step();
   // TODO fix
@@ -491,10 +519,11 @@ static void displayFunc(void) {
   glUseProgram(m_particles_program);
   // Scale for point sprites
 
-  // float uniformVal = (m_window_h / 1920.0f) * (1080.0f / tanf(m_fov * 0.5f *
-  // float(M_PI) / 180.0f));
+  float uniformVal = (m_window_h / 1920.0f) *
+                     (1080.0f / tanf(m_fov * 0.5f * float(M_PI) / 180.0f));
 
-  float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) / 180.0f);
+  // float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) /
+  // 180.0f);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointScale"),
               uniformVal);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
@@ -626,5 +655,5 @@ int main(int argc, char *argv[]) {
 
 // find_num_surface_neighbors<<<(num - 1) / block_size + 1, block_size>>>(
 //     _buffer_num_surface_neighbors.addr(), particles->get_pos_ptr(),
-//     particles->get_mass_ptr(), num, _cell_start_particle.addr(), _cell_size,
-//     _cell_length, _density, _buffer_boundary.addr());
+//     particles->get_mass_ptr(), num, _cell_start_particle.addr(),
+//     _cell_size, _cell_length, _density, _buffer_boundary.addr());

@@ -23,7 +23,10 @@
 #include <vector_types.h>
 
 __device__ __constant__ double pi = 3.14159265358979323846;
-__device__ __constant__ float r_9 = 1111.111111f;
+__device__ __constant__ float r_9 = 493.8271605;
+__device__ __constant__ float r_9_b = 1111.1111111;
+// __device__ __constant__ float r_9 = 277.7777778;
+
 #define EPSILON_m 1e-4f // Small threshold for comparison
 
 int t_merge_iter = 0;
@@ -964,7 +967,7 @@ __global__ void update_upsampled_cuda(
   float max_w_ij = 0.0f;
   float alpha_i = 0.0f;
   const float3 g_t = make_float3(0.0f, -9.8f, 0.0f);
-  const float d_t = 0.001f;
+  const float d_t = 0.002f;
 
 #pragma unroll
   for (auto m = 0; m < 27; __syncthreads(), ++m) {
@@ -979,7 +982,7 @@ __global__ void update_upsampled_cuda(
     int j = cell_start_granular[cellID];
     while (j < cell_start_granular[cellID + 1]) {
       const float dis = length(pos_i - pos_granular[j]);
-      const float t_1 = dis * dis * r_9;
+      const float t_1 = 1 - (dis * dis * r_9);
 
       const float w_ij = max(0.0f, t_1 * t_1 * t_1);
       total_weight += w_ij;
@@ -993,34 +996,42 @@ __global__ void update_upsampled_cuda(
       j++;
     }
 
-    // int k = cell_start_boundary[cellID];
-    // while (j < cell_start_boundary[cellID + 1]) {
-    //   const float dis = length(pos_i - pos_boundary[k]);
-    //   const float t_1 = dis * dis * r_9;
+    int k = cell_start_boundary[cellID];
+    while (k < cell_start_boundary[cellID + 1]) {
+      const float dis = length(pos_i - pos_boundary[k]);
+      const float t_1 = 1 - (dis * dis * r_9);
 
-    //   const float w_ij = max(0.0f, t_1 * t_1 * t_1);
-    //   total_weight += w_ij;
+      const float w_ij = max(0.0f, t_1 * t_1 * t_1);
+      total_weight += w_ij;
 
-    //   // weighted_vel += w_ij * vel_granular[j];
-    //   k++;
-    // }
+      if (w_ij > max_w_ij) {
+        max_w_ij = w_ij;
+      }
+      // weighted_vel += w_ij * vel_granular[j];
+      k++;
+    }
   }
 
-  if (total_weight == 0) {
-    vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
+  if (total_weight == 0.0f) {
+    // vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
     pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
     return;
   }
 
   weighted_vel /= total_weight;
-  if (max_w_ij <= 0.7023319616f || max_w_ij / total_weight >= 0.6) {
+  if (max_w_ij <= 0.6023319616f || max_w_ij / total_weight >= 0.6) {
     alpha_i = 1 - max_w_ij;
+  } else {
+    alpha_i = 0.0f;
   }
 
   vel_upsampled[i] =
       alpha_i * (vel_upsampled[i] + g_t * d_t) + (1 - alpha_i) * weighted_vel;
 
   pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
+  if (pos_upsampled[i].y < 0.01f) {
+    pos_upsampled[i].y = 0.01f;
+  }
 
   return;
 }
