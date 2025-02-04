@@ -5,6 +5,7 @@
 *.o
 *.obj
 *.idx
+*vtk
 
 # Precompiled Headers
 *.gch

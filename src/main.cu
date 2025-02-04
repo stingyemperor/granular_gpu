@@ -10,9 +10,11 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <vector>
 
+using json = nlohmann::json;
 // vbo and GL variables
 static GLuint particlesVBO;
 static GLuint particlesColorVBO;
@@ -23,7 +25,7 @@ static GLuint m_particles_program;
 static const int m_window_h = 1600;
 static const int m_fov = 30;
 static const float particle_radius = 0.01f;
-static const float density = 238732.4146f;
+float density = 238732.4146f;
 static size_t last_particle_count =
     0; // Add this to track particle count changes
 
@@ -41,18 +43,19 @@ bool show_surface = false;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
-const float3 space_size = make_float3(1.8f, 1.8f, 1.8f);
+float3 space_size = make_float3(1.8f, 1.8f, 1.8f);
+float3 box_size = make_float3(1.8f, 1.8f, 1.8f);
 // const float3 space_size = make_float3(1.5f, 1.5f, 1.5f);
-const float dt = 0.002f;
-const float3 G = make_float3(0.0f, -9.8f, 0.0f);
-const float sphSpacing = 0.02f;
-const float initSpacing = 0.030f;
-const float smoothing_radius = 2.0f * sphSpacing;
-const float cell_length = 1.01f * smoothing_radius;
+float dt = 0.002f;
+float3 G = make_float3(0.0f, -9.8f, 0.0f);
+float sphSpacing = 0.02f;
+float initSpacing = 0.030f;
+float smoothing_radius = 2.0f * sphSpacing;
+float cell_length = 1.01f * smoothing_radius;
 // const float cell_length = 0.02f;
-const int3 cell_size = make_int3(ceil(space_size.x / cell_length),
-                                 ceil(space_size.y / cell_length),
-                                 ceil(space_size.z / cell_length));
+int3 cell_size = make_int3(ceil(space_size.x / cell_length),
+                           ceil(space_size.y / cell_length),
+                           ceil(space_size.z / cell_length));
 
 struct SceneConfig {
   float3 space_size;
@@ -64,7 +67,92 @@ struct SceneConfig {
   float cell_length;
   int3 cell_size;
   float density;
+  float3 box_size;
 };
+
+SceneConfig loadSceneConfig(const std::string &config_file) {
+  SceneConfig config;
+
+  std::ifstream file(config_file);
+  if (!file.is_open()) {
+    throw std::runtime_error("Unable to open config file: " + config_file);
+  }
+
+  json j;
+  file >> j;
+
+  // Read space size
+  config.space_size = make_float3(j["space_size"]["x"], j["space_size"]["y"],
+                                  j["space_size"]["z"]);
+
+  config.dt = j["dt"];
+
+  // Read gravity
+  config.G =
+      make_float3(j["gravity"]["x"], j["gravity"]["y"], j["gravity"]["z"]);
+
+  config.box_size =
+      make_float3(j["box_size"]["x"], j["box_size"]["y"], j["box_size"]["z"]);
+
+  config.sphSpacing = j["sph_spacing"];
+  config.initSpacing = j["init_spacing"];
+  config.smoothing_radius = j["smoothing_radius"];
+  config.cell_length = j["cell_length"];
+  config.density = j["density"];
+
+  // Calculate cell size based on space size and cell length
+  config.cell_size = make_int3(ceil(config.space_size.x / config.cell_length),
+                               ceil(config.space_size.y / config.cell_length),
+                               ceil(config.space_size.z / config.cell_length));
+
+  return config;
+}
+
+void saveUpsampledPositionsToVTK(
+    const std::shared_ptr<GranularParticles> &upsampled_particles,
+    int frameId) {
+  // Create filename with frame number
+  std::string filename = "data/" + std::to_string(frameId) + ".vtk";
+  std::ofstream outFile(filename);
+
+  if (!outFile.is_open()) {
+    std::cerr << "Failed to open file: " << filename << std::endl;
+    return;
+  }
+
+  // Get positions from device
+  std::vector<float3> positions(upsampled_particles->size());
+  CUDA_CALL(cudaMemcpy(positions.data(), upsampled_particles->get_pos_ptr(),
+                       positions.size() * sizeof(float3),
+                       cudaMemcpyDeviceToHost));
+
+  // Write VTK header
+  outFile << "# vtk DataFile Version 3.0\n";
+  outFile << "Upsampled Granular Particles\n";
+  outFile << "ASCII\n";
+  outFile << "DATASET UNSTRUCTURED_GRID\n";
+
+  // Write points
+  outFile << "POINTS " << positions.size() << " float\n";
+  for (const auto &pos : positions) {
+    outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+  }
+
+  // Write cells (each particle is a vertex cell)
+  outFile << "CELLS " << positions.size() << " " << positions.size() * 2
+          << "\n";
+  for (size_t i = 0; i < positions.size(); i++) {
+    outFile << "1 " << i << "\n";
+  }
+
+  // Write cell types (VTK_VERTEX = 1)
+  outFile << "CELL_TYPES " << positions.size() << "\n";
+  for (size_t i = 0; i < positions.size(); i++) {
+    outFile << "1\n";
+  }
+
+  outFile.close();
+}
 
 void saveFrameTimes(const std::vector<float> &frame_times) {
   std::ofstream outFile("frame_times_adaptive.txt");
@@ -104,9 +192,9 @@ void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
   std::vector<float3> pos;
   // 36 24 24
-  for (auto i = 0; i < 50; ++i) {
-    for (auto j = 0; j < 25; ++j) {
-      for (auto k = 0; k < 25; ++k) {
+  for (auto i = 0; i < box_size.x; ++i) {
+    for (auto j = 0; j < box_size.y; ++j) {
+      for (auto k = 0; k < box_size.z; ++k) {
         auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
                              0.17f + initSpacing * k);
         pos.push_back(x);
@@ -423,7 +511,7 @@ void renderUpsampledParticles(void) {
 }
 
 void one_step() {
-  saveUpsampledPositionsToCSV(p_system->get_upsampled(), frameId);
+  // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
   ++frameId;
   p_system->step();
   // TODO fix
@@ -602,6 +690,25 @@ void reshape(int width, int height) {
 
 int main(int argc, char *argv[]) {
   try {
+    SceneConfig config;
+    try {
+      config = loadSceneConfig("scenes/box.json");
+    } catch (const std::exception &e) {
+      std::cerr << "Error loading scene config: " << e.what() << std::endl;
+      return 1;
+    }
+
+    space_size = config.space_size;
+    dt = config.dt;
+    G = config.G;
+    sphSpacing = config.sphSpacing;
+    initSpacing = config.initSpacing;
+    smoothing_radius = config.smoothing_radius;
+    cell_length = config.cell_length;
+    cell_size = config.cell_size;
+    density = config.density;
+    box_size = config.box_size;
+
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_MULTISAMPLE);
 

@@ -362,7 +362,7 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
   const float3 zero = make_float3(0.0f, 0.0f, 0.0f);
   const int num = particles->size();
 
-  while (stab_iter < 2) {
+  while (stab_iter < 3) {
 
     // reset change in position and number of elements
     thrust::device_ptr<float3> thrust_buffer_float_3 =
@@ -1013,7 +1013,7 @@ __global__ void update_upsampled_cuda(
   }
 
   if (total_weight == 0.0f) {
-    // vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
+    vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
     pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
     return;
   }
