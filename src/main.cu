@@ -26,8 +26,7 @@ static const int m_window_h = 1600;
 static const int m_fov = 30;
 static const float particle_radius = 0.01f;
 float density = 238732.4146f;
-static size_t last_particle_count =
-    0; // Add this to track particle count changes
+static size_t last_particle_count = 0;
 
 // view variables
 static float rot[2] = {0.0f, 0.0f};
@@ -209,7 +208,7 @@ void init_granular_system() {
                                                      particle_radius);
 
   for (const auto &particle : pos) {
-    for (int n = 0; n < 10;
+    for (int n = 0; n < 12;
          ++n) { // Generate 10 upsampled particles per original particle
       float3 offset =
           make_float3(distribution(generator), distribution(generator),
@@ -511,7 +510,7 @@ void renderUpsampledParticles(void) {
 }
 
 void one_step() {
-  // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
   ++frameId;
   p_system->step();
   // TODO fix
@@ -610,8 +609,7 @@ static void displayFunc(void) {
   float uniformVal = (m_window_h / 1920.0f) *
                      (1080.0f / tanf(m_fov * 0.5f * float(M_PI) / 180.0f));
 
-  // float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) /
-  // 180.0f);
+  // float uniformVal = m_window_h / tanf(m_fov * 0.5f * float(M_PI) / 180.0f);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointScale"),
               uniformVal);
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),

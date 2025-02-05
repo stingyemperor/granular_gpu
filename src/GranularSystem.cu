@@ -40,7 +40,7 @@ GranularSystem::GranularSystem(
       _cell_size(cell_size),
       _buffer_int(
           std::max(total_size(), cell_size.x * cell_size.y * cell_size.z + 1)),
-      _density(density), _max_mass(8), _min_mass(1),
+      _density(density), _max_mass(4), _min_mass(1),
       _upsampled_radius(upsampled_radius), _buffer_boundary(_particles->size()),
       _buffer_cover_vector(_particles->size()),
       _buffer_num_surface_neighbors(_particles->size()) {
@@ -618,10 +618,10 @@ void GranularSystem::set_surface_particles(
 
   cudaDeviceSynchronize();
 
-  find_num_surface_neighbors<<<(num - 1) / block_size + 1, block_size>>>(
-      _buffer_num_surface_neighbors.addr(), particles->get_pos_ptr(),
-      particles->get_mass_ptr(), num, _cell_start_particle.addr(), _cell_size,
-      _cell_length, _density, _buffer_boundary.addr());
+  // find_num_surface_neighbors<<<(num - 1) / block_size + 1, block_size>>>(
+  //     _buffer_num_surface_neighbors.addr(), particles->get_pos_ptr(),
+  //     particles->get_mass_ptr(), num, _cell_start_particle.addr(),
+  //     _cell_size, _cell_length, _density, _buffer_boundary.addr());
 
   CUDA_CALL(cudaMemcpy(
       particles->get_num_surface_ptr(), _buffer_num_surface_neighbors.addr(),

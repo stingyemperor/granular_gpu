@@ -8,7 +8,7 @@
 class Solver {
 public:
   Solver(const std::shared_ptr<GranularParticles> &particles)
-      : _max_iter(5), _blend_factor(3), _buffer_int(particles->size()),
+      : _max_iter(5), _blend_factor(5), _buffer_int(particles->size()),
         _buffer_float(particles->size()), _buffer_float3(particles->size()),
         _pos_t(particles->size()), _num_constraints(particles->size()),
         _buffer_remove(particles->size()), _buffer_split(particles->size()),

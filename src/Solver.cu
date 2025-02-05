@@ -182,20 +182,51 @@ void Solver::apply_mass_scaling(std::shared_ptr<GranularParticles> &particles) {
 
 struct final_velocity_functor {
   float dt;
+  float min_speed;   // Speed threshold below which damping is minimal
+  float max_speed;   // Speed threshold for maximum damping
+  float min_damping; // Minimum damping factor (for low velocities)
+  float max_damping; // Maximum damping factor (for high velocities)
 
-  final_velocity_functor(float _dt) : dt(_dt) {}
+  final_velocity_functor(float _dt)
+      : dt(_dt),
+        min_speed(1.0f),    // Adjust these thresholds based on your simulation
+        max_speed(10.0f),   // Adjust these thresholds based on your simulation
+        min_damping(0.99f), // Almost no damping for slow particles
+        max_damping(0.7f)   // Stronger damping for fast particles
+  {}
 
   __host__ __device__ float3
   operator()(const thrust::tuple<float3, float3> &t) const {
-    const float dt_inv = 1 / dt;
+    const float dt_inv = 1.0f / dt;
     const float3 &pos = thrust::get<0>(t);
     const float3 &pos_t = thrust::get<1>(t);
 
-    return make_float3(dt_inv * (pos_t.x - pos.x), dt_inv * (pos_t.y - pos.y),
-                       dt_inv * (pos_t.z - pos.z));
+    // Calculate raw velocity
+    float3 vel =
+        make_float3(dt_inv * (pos_t.x - pos.x), dt_inv * (pos_t.y - pos.y),
+                    dt_inv * (pos_t.z - pos.z));
+
+    // Calculate speed
+    float speed = length(vel);
+
+    if (speed > min_speed) {
+      // Calculate damping factor based on speed
+      float t =
+          clamp((speed - min_speed) / (max_speed - min_speed), 0.0f, 1.0f);
+
+      // Smooth interpolation between min and max damping
+      float damping = min_damping + (max_damping - min_damping) * t;
+
+      // Apply non-linear damping
+      float damping_factor = damping + (1.0f - damping) * expf(-speed * 0.1f);
+
+      // Apply damping
+      vel *= damping_factor;
+    }
+
+    return vel;
   }
 };
-
 void Solver::final_update(std::shared_ptr<GranularParticles> &particles,
                           float dt) {
 
@@ -679,6 +710,9 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     auto m_t = thrust::device_pointer_cast(particles->get_mass_ptr());
 
+    thrust::fill(thrust::device, _buffer_merged_last_step.addr(),
+                 _buffer_merged_last_step.addr() + particles->size(), 0);
+
     DArray<float> old_masses(particles->size());
     CUDA_CALL(cudaMemcpy(old_masses.addr(), particles->get_mass_ptr(),
                          sizeof(float) * particles->size(),
@@ -691,7 +725,7 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     cudaError_t err = cudaSuccess;
 
     // Run merge kernel
-    if (t_merge_iter == 8) {
+    if (t_merge_iter == 6) {
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),

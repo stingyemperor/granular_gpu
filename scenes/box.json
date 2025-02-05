@@ -1,6 +1,6 @@
 {
   "space_size": {
-    "x": 1.8,
+    "x": 2.0,
     "y": 1.8,
     "z": 1.8
   },
@@ -11,7 +11,7 @@
     "z": 0.0
   },
   "sph_spacing": 0.02,
-  "init_spacing": 0.03,
+  "init_spacing": 0.032,
   "smoothing_radius": 0.04,
   "cell_length": 0.0404,
   "density": 238732.4146,
