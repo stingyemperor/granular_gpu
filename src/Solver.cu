@@ -259,8 +259,23 @@ __device__ void boundary_constraint(float3 &del_p, int &n, int i,
     const float r_i = max(cbrtf((3 * m[i]) / (4 * pi * density)), 0.01f);
     const float mag = dis - (0.01 + r_i);
     const float3 p_12 = pos_p - pos_b[j];
+
     if (mag < 0.0) {
-      del_p -= (mag / dis) * p_12;
+      const float3 del_p_i = (mag / dis) * p_12;
+      const float3 del_p_i_perp =
+          del_p_i - dot(del_p_i, p_12) * p_12 / (dis * dis);
+      const float del_p_i_norm = norm3df(del_p_i.x, del_p_i.y, del_p_i.z);
+
+      const float del_p_i_perp_norm =
+          norm3df(del_p_i_perp.x, del_p_i_perp.y, del_p_i_perp.z);
+
+      float min_fric = min((0.01 + r_i) * 0.5 / del_p_i_perp_norm, 1.0f);
+
+      if (del_p_i_perp_norm < (r_i + 0.01) * 0.5) {
+        del_p -= del_p_i;
+      } else {
+        del_p -= del_p_i * min_fric;
+      }
       n++;
     }
     ++j;
@@ -280,12 +295,6 @@ __device__ void particles_constraint(float3 &del_p, int &n, int i,
       const float inv_m_sum = 1.0 / (inv_m_i + inv_m_j);
       const float r_i = cbrtf((3 * m[i]) / (4 * pi * density));
       const float r_j = cbrtf((3 * m[j]) / (4 * pi * density));
-      if (i == 0) {
-
-        // printf("m_1 = %f, m_2 = %f\n", inv_m_i, inv_m_j);
-        // printf("r_1 = %f, r_2 = %f\n", r_i, r_j);
-        // printf("mass_sum = %f\n", inv_m_sum);
-      }
       const float dis =
           norm3df(pos_p[i].x - pos_p[j].x, pos_p[i].y - pos_p[j].y,
                   pos_p[i].z - pos_p[j].z);

@@ -735,7 +735,7 @@ static void displayFunc(void) {
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
   renderUpsampledParticles();
-  renderBoundaryCorners();
+  // renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();

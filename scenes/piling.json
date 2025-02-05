@@ -22,13 +22,13 @@
   },
   "scene": 0,
   "boundary_translation": {
-    "x": -5.0,
-    "y": 0.0,
-    "z": -5.0
-  },
-  "particle_translation": {
     "x": 0.0,
     "y": 0.0,
     "z": 0.0
+  },
+  "particle_translation": {
+    "x": 5.0,
+    "y": 0.1,
+    "z": 5.0
   }
 }
