@@ -1026,7 +1026,6 @@ __global__ void update_upsampled_cuda(
       if (w_ij > max_w_ij) {
         max_w_ij = w_ij;
       }
-
       j++;
     }
 
@@ -1049,6 +1048,23 @@ __global__ void update_upsampled_cuda(
   if (total_weight == 0.0f) {
     vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
     pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
+
+    pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
+    if (pos_upsampled[i].y < 0.005f) {
+      pos_upsampled[i].y = 0.005f;
+    }
+    if (pos_upsampled[i].x > 1.95) {
+      pos_upsampled[i].x = 1.95;
+    }
+    if (pos_upsampled[i].x < 0.05) {
+      pos_upsampled[i].x = 0.05;
+    }
+    if (pos_upsampled[i].z > 1.75) {
+      pos_upsampled[i].z = 1.75;
+    }
+    if (pos_upsampled[i].z < 0.05) {
+      pos_upsampled[i].z = 0.05;
+    }
     return;
   }
 
@@ -1063,8 +1079,20 @@ __global__ void update_upsampled_cuda(
       alpha_i * (vel_upsampled[i] + g_t * d_t) + (1 - alpha_i) * weighted_vel;
 
   pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
-  if (pos_upsampled[i].y < 0.01f) {
-    pos_upsampled[i].y = 0.01f;
+  if (pos_upsampled[i].y < 0.005f) {
+    pos_upsampled[i].y = 0.005f;
+  }
+  if (pos_upsampled[i].x > 1.95) {
+    pos_upsampled[i].x = 1.95;
+  }
+  if (pos_upsampled[i].x < 0.05) {
+    pos_upsampled[i].x = 0.05;
+  }
+  if (pos_upsampled[i].z > 1.75) {
+    pos_upsampled[i].z = 1.75;
+  }
+  if (pos_upsampled[i].z < 0.05) {
+    pos_upsampled[i].z = 0.05;
   }
 
   return;

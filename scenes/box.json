@@ -19,5 +19,16 @@
     "x": 50,
     "y": 50,
     "z": 40
+  },
+  "scene": 1,
+  "boundary_translation": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "particle_translation": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
   }
 }

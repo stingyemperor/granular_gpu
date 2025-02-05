@@ -27,6 +27,9 @@ static const int m_fov = 30;
 static const float particle_radius = 0.01f;
 float density = 238732.4146f;
 static size_t last_particle_count = 0;
+int scene = 0;
+float3 boundary_translation = make_float3(0.0f, 0.0f, 0.0f);
+float3 particle_translation = make_float3(0.0f, 0.0f, 0.0f);
 
 // view variables
 static float rot[2] = {0.0f, 0.0f};
@@ -67,7 +70,12 @@ struct SceneConfig {
   int3 cell_size;
   float density;
   float3 box_size;
+  float3 boundary_translation;
+  float3 particle_translation;
+  int scene;
 };
+
+enum Scene { PILING = 0, BOX = 1 };
 
 SceneConfig loadSceneConfig(const std::string &config_file) {
   SceneConfig config;
@@ -98,6 +106,13 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
   config.smoothing_radius = j["smoothing_radius"];
   config.cell_length = j["cell_length"];
   config.density = j["density"];
+  config.scene = j["scene"];
+  config.boundary_translation = make_float3(j["boundary_translation"]["x"],
+                                            j["boundary_translation"]["y"],
+                                            j["boundary_translation"]["z"]);
+  config.particle_translation = make_float3(j["particle_translation"]["x"],
+                                            j["particle_translation"]["y"],
+                                            j["particle_translation"]["z"]);
 
   // Calculate cell size based on space size and cell length
   config.cell_size = make_int3(ceil(config.space_size.x / config.cell_length),
@@ -195,7 +210,8 @@ void init_granular_system() {
     for (auto j = 0; j < box_size.y; ++j) {
       for (auto k = 0; k < box_size.z; ++k) {
         auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
-                             0.17f + initSpacing * k);
+                             0.17f + initSpacing * k) +
+                 particle_translation;
         pos.push_back(x);
       }
     }
@@ -224,38 +240,60 @@ void init_granular_system() {
   const auto compact_size = 2 * make_int3(ceil(space_size.x / cell_length),
                                           ceil(space_size.y / cell_length),
                                           ceil(space_size.z / cell_length));
-  // front and back
-  for (auto i = 0; i < compact_size.x; ++i) {
-    for (auto j = 0; j < compact_size.y; ++j) {
-      auto x = make_float3(i, j, 0) / make_float3(compact_size - make_int3(1)) *
-               space_size;
-      pos.push_back(0.99f * x + 0.005f * space_size);
-      x = make_float3(i, j, compact_size.z - 1) /
-          make_float3(compact_size - make_int3(1)) * space_size;
-      pos.push_back(0.99f * x + 0.005f * space_size);
+  if (scene == Scene::PILING) {
+
+    // top and bottom
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(i, 0, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, compact_size.y - 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+
+  } else if (scene == Scene::BOX) {
+    // front and back
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.y; ++j) {
+        auto x = make_float3(i, j, 0) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, j, compact_size.z - 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // top and bottom
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(i, 0, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, compact_size.y - 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // left and right
+    for (auto i = 0; i < compact_size.y - 2; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(0, i + 1, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(compact_size.x - 1, i + 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
     }
   }
-  // top and bottom
-  for (auto i = 0; i < compact_size.x; ++i) {
-    for (auto j = 0; j < compact_size.z - 2; ++j) {
-      auto x = make_float3(i, 0, j + 1) /
-               make_float3(compact_size - make_int3(1)) * space_size;
-      pos.push_back(0.99f * x + 0.005f * space_size);
-      x = make_float3(i, compact_size.y - 1, j + 1) /
-          make_float3(compact_size - make_int3(1)) * space_size;
-      pos.push_back(0.99f * x + 0.005f * space_size);
-    }
-  }
-  // left and right
-  for (auto i = 0; i < compact_size.y - 2; ++i) {
-    for (auto j = 0; j < compact_size.z - 2; ++j) {
-      auto x = make_float3(0, i + 1, j + 1) /
-               make_float3(compact_size - make_int3(1)) * space_size;
-      pos.push_back(0.99f * x + 0.005f * space_size);
-      x = make_float3(compact_size.x - 1, i + 1, j + 1) /
-          make_float3(compact_size - make_int3(1)) * space_size;
-      pos.push_back(0.99f * x + 0.005f * space_size);
-    }
+  std::cout << "Boundary translation : " << boundary_translation.x << " "
+            << boundary_translation.y << " " << boundary_translation.z
+            << std::endl;
+  for (auto &p : pos) {
+    p += boundary_translation;
   }
 
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
@@ -509,8 +547,75 @@ void renderUpsampledParticles(void) {
   glDisableClientState(GL_COLOR_ARRAY);
 }
 
+void renderBoundaryCorners() {
+  auto boundary_particles = p_system->get_boundaries();
+  size_t boundary_count = boundary_particles->size();
+
+  // Create VBOs for boundary corners if they don't exist
+  static GLuint boundaryVBO = 0;
+  static GLuint boundaryColorVBO = 0;
+
+  if (boundaryVBO == 0) {
+    createVBO(&boundaryVBO, sizeof(float3) * boundary_count);
+    createVBO(&boundaryColorVBO, sizeof(float3) * boundary_count);
+  }
+
+  // Map OpenGL buffer objects for writing from CUDA
+  float3 *dptr;
+  float3 *cptr;
+
+  CUDA_CALL(cudaGLMapBufferObject((void **)&dptr, boundaryVBO));
+  CUDA_CALL(cudaGLMapBufferObject((void **)&cptr, boundaryColorVBO));
+
+  // Copy positions from device to mapped buffer
+  CUDA_CALL(cudaMemcpy(dptr, boundary_particles->get_pos_ptr(),
+                       boundary_count * sizeof(float3),
+                       cudaMemcpyDeviceToDevice));
+
+  // Set all colors to red for corner particles
+  std::vector<float3> colors(boundary_count, make_float3(1.0f, 0.0f, 0.0f));
+  CUDA_CALL(cudaMemcpy(cptr, colors.data(), boundary_count * sizeof(float3),
+                       cudaMemcpyHostToDevice));
+
+  // Unmap buffer objects
+  CUDA_CALL(cudaGLUnmapBufferObject(boundaryVBO));
+  CUDA_CALL(cudaGLUnmapBufferObject(boundaryColorVBO));
+
+  // Set up rendering state
+  glPointSize(10.0f); // Larger points for corners
+
+  // Enable vertex arrays
+  glBindBuffer(GL_ARRAY_BUFFER, boundaryVBO);
+  glVertexPointer(3, GL_FLOAT, 0, nullptr);
+  glEnableClientState(GL_VERTEX_ARRAY);
+
+  glBindBuffer(GL_ARRAY_BUFFER, boundaryColorVBO);
+  glColorPointer(3, GL_FLOAT, 0, nullptr);
+  glEnableClientState(GL_COLOR_ARRAY);
+
+  // Draw the boundary corners
+  glDrawArrays(GL_POINTS, 0, boundary_count);
+
+  // Cleanup state
+  glDisableClientState(GL_VERTEX_ARRAY);
+  glDisableClientState(GL_COLOR_ARRAY);
+  glPointSize(1.0f); // Reset point size
+
+  // Delete VBOs in destructor or cleanup
+  static bool first_run = true;
+  if (first_run) {
+    atexit([]() {
+      if (boundaryVBO != 0)
+        deleteVBO(&boundaryVBO);
+      if (boundaryColorVBO != 0)
+        deleteVBO(&boundaryColorVBO);
+    });
+    first_run = false;
+  }
+}
+
 void one_step() {
-  saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
   ++frameId;
   p_system->step();
   // TODO fix
@@ -630,6 +735,7 @@ static void displayFunc(void) {
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
   renderUpsampledParticles();
+  renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -690,7 +796,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig("scenes/piling.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
@@ -706,6 +812,9 @@ int main(int argc, char *argv[]) {
     cell_size = config.cell_size;
     density = config.density;
     box_size = config.box_size;
+    boundary_translation = config.boundary_translation;
+    particle_translation = config.particle_translation;
+    scene = config.scene;
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_MULTISAMPLE);
