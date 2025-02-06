@@ -54,6 +54,7 @@ target_include_directories(
   main PRIVATE ${CUDAToolkit_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS}
                ${GLUT_INCLUDE_DIRS} ${OPENGL_INCLUDE_DIR} )
 
+
 # Link libraries
 target_link_libraries(
   main PRIVATE CUDA::cudart ${GLEW_LIBRARIES} ${GLUT_LIBRARIES} OpenGL::GL GLU

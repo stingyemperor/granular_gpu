@@ -14,6 +14,14 @@
 #include <random>
 #include <vector>
 
+// interactivity
+bool picking_mode = false;
+float3 pick_center = make_float3(0.0f, 0.0f, 0.0f);
+float pick_radius = 0.03f; // Radius of picking sphere
+DArray<int> picked_particles(1);
+int num_picked = 0; // Keep track of number of picked particles
+float3 last_pick_pos = make_float3(0.0f, 0.0f, 0.0f);
+
 using json = nlohmann::json;
 // vbo and GL variables
 static GLuint particlesVBO;
@@ -399,42 +407,187 @@ enum {
 };
 }
 
+__global__ void markParticlesInSphere(float3 *positions, int num_particles,
+                                      float3 sphere_center, float sphere_radius,
+                                      int *picked_indices) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_particles)
+    return;
+
+  float3 pos = positions[idx];
+  float3 diff = make_float3(pos.x - sphere_center.x, pos.y - sphere_center.y,
+                            pos.z - sphere_center.z);
+  float dist = sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+
+  // Print some particle positions for debugging
+  if (idx < 5) { // Only print first 5 particles
+    printf("Particle %d position: (%f, %f, %f)\n", idx, pos.x, pos.y, pos.z);
+  }
+
+  if (dist <= sphere_radius) {
+    int picked_idx = atomicAdd(picked_indices, 1);
+    if (picked_idx < num_particles) {
+      picked_indices[picked_idx + 1] = idx;
+      printf("Picked particle %d at position (%f, %f, %f), distance %f\n", idx,
+             pos.x, pos.y, pos.z, dist);
+    }
+  }
+}
+
+__global__ void updatePickedParticlesPositions(float3 *positions,
+                                               int *picked_indices,
+                                               int num_picked, float3 delta) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_picked)
+    return;
+
+  int particle_idx = picked_indices[idx];
+  float3 old_pos = positions[particle_idx];
+  float3 new_pos = old_pos + delta;
+
+  // Add bounds checking (adjust these values based on your scene)
+  new_pos.x = fmaxf(0.01f, fminf(new_pos.x, 0.99f));
+  new_pos.y = fmaxf(0.01f, fminf(new_pos.y, 0.99f));
+  new_pos.z = fmaxf(0.01f, fminf(new_pos.z, 0.99f));
+
+  positions[particle_idx] = new_pos;
+
+  // Debug print
+  if (idx == 0) { // Only print for first particle to avoid spam
+    printf("Particle %d moved from (%f, %f, %f) to (%f, %f, %f)\n",
+           particle_idx, old_pos.x, old_pos.y, old_pos.z, new_pos.x, new_pos.y,
+           new_pos.z);
+  }
+}
+
+float3 screenToWorld(int x, int y) {
+  GLint viewport[4];
+  GLdouble modelview[16];
+  GLdouble projection[16];
+  GLfloat winX, winY, winZ;
+  GLdouble posX, posY, posZ;
+
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+  glGetDoublev(GL_PROJECTION_MATRIX, projection);
+
+  // Convert screen coordinates to normalized device coordinates
+  winX = (float)x;
+  winY = (float)viewport[3] - (float)y;
+
+  // Use a fixed depth for movement
+  winZ = 0.95f; // Use a consistent depth for movement
+
+  gluUnProject(winX, winY, winZ, modelview, projection, viewport, &posX, &posY,
+               &posZ);
+
+  // Scale to match particle space
+  float3 world_pos =
+      make_float3((float)posX * 0.1f, (float)posY * 0.1f, (float)posZ * 0.1f);
+
+  return world_pos;
+}
 void mouseFunc(const int button, const int state, const int x, const int y) {
   if (GLUT_DOWN == state) {
     if (GLUT_LEFT_BUTTON == button) {
-      mouse_left_down = true;
+      if (glutGetModifiers() & GLUT_ACTIVE_CTRL) {
+        std::cout << "Picking mode activated at screen coords: " << x << ", "
+                  << y << std::endl;
+        picking_mode = true;
+        pick_center = screenToWorld(x, y);
+        std::cout << "World coords: " << pick_center.x << ", " << pick_center.y
+                  << ", " << pick_center.z << std::endl;
+        last_pick_pos = pick_center;
+
+        // Resize picked_particles array
+        if (picked_particles.capacity() < p_system->size() + 1) {
+          picked_particles.resize(p_system->size() + 1);
+        }
+
+        // Reset counter
+        int zero = 0;
+        CUDA_CALL(cudaMemcpy(picked_particles.addr(), &zero, sizeof(int),
+                             cudaMemcpyHostToDevice));
+
+        float3 *pos;
+        CUDA_CALL(cudaGLMapBufferObject((void **)&pos, particlesVBO));
+
+        markParticlesInSphere<<<(p_system->size() + 255) / 256, 256>>>(
+            pos, p_system->size(), pick_center, pick_radius,
+            picked_particles.addr());
+
+        CUDA_CALL(cudaDeviceSynchronize());
+
+        CUDA_CALL(cudaGLUnmapBufferObject(particlesVBO));
+
+        // Get number of picked particles
+        CUDA_CALL(cudaMemcpy(&num_picked, picked_particles.addr(), sizeof(int),
+                             cudaMemcpyDeviceToHost));
+
+        std::cout << "Number of particles picked: " << num_picked << std::endl;
+      } else {
+        mouse_left_down = true;
+      }
       mousePos[0] = x;
       mousePos[1] = y;
-    } else if (GLUT_RIGHT_BUTTON == button) {
     }
   } else {
-    mouse_left_down = false;
+    if (GLUT_LEFT_BUTTON == button) {
+      if (picking_mode) {
+        std::cout << "Picking mode deactivated" << std::endl;
+        picking_mode = false;
+        num_picked = 0;
+      }
+      mouse_left_down = false;
+    }
   }
-  return;
 }
 
 void motionFunc(const int x, const int y) {
-  int dx, dy;
-  if (-1 == mousePos[0] && -1 == mousePos[1]) {
-    mousePos[0] = x;
-    mousePos[1] = y;
-    dx = dy = 0;
-  } else {
-    dx = x - mousePos[0];
-    dy = y - mousePos[1];
-  }
-  if (mouse_left_down) {
+  if (picking_mode && num_picked > 0) {
+    int dx = x - mousePos[0];
+    int dy = y - mousePos[1];
+
+    // Convert screen movement to world space movement
+    float movement_scale =
+        0.001f; // Adjust this value to control movement sensitivity
+    float3 delta = make_float3(
+        dx * movement_scale,
+        -dy * movement_scale, // Invert Y movement to match screen coordinates
+        0.0f                  // Keep Z movement constant for now
+    );
+
+    // Apply rotation to delta based on current view
+    float rot_x_rad = rot[0] * M_PI / 180.0f;
+    float rot_y_rad = rot[1] * M_PI / 180.0f;
+
+    float3 rotated_delta = make_float3(
+        delta.x * cosf(rot_y_rad) - delta.z * sinf(rot_y_rad), delta.y,
+        delta.x * sinf(rot_y_rad) + delta.z * cosf(rot_y_rad));
+
+    std::cout << "Moving particles by delta: " << rotated_delta.x << ", "
+              << rotated_delta.y << ", " << rotated_delta.z << std::endl;
+
+    float3 *pos;
+    CUDA_CALL(cudaGLMapBufferObject((void **)&pos, particlesVBO));
+
+    updatePickedParticlesPositions<<<(num_picked + 255) / 256, 256>>>(
+        pos, picked_particles.addr() + 1, num_picked, rotated_delta);
+
+    CUDA_CALL(cudaDeviceSynchronize());
+    CUDA_CALL(cudaGLUnmapBufferObject(particlesVBO));
+
+  } else if (mouse_left_down) {
+    int dx = x - mousePos[0];
+    int dy = y - mousePos[1];
     rot[0] += (float(dy) * 180.0f) / 720.0f;
     rot[1] += (float(dx) * 180.0f) / 720.0f;
   }
 
   mousePos[0] = x;
   mousePos[1] = y;
-
   glutPostRedisplay();
-  return;
 }
-
 extern "C" void
 generate_dots(float3 *dot, float3 *color,
               const std::shared_ptr<GranularParticles> particles, int *surface,
@@ -740,11 +893,38 @@ static void displayFunc(void) {
   glPopMatrix();
   glPopMatrix();
 
+  if (picking_mode) {
+    glUseProgram(0);
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+
+    // Draw picking sphere
+    glDisable(GL_DEPTH_TEST);
+    glColor4f(1.0f, 1.0f, 0.0f, 0.5f);
+
+    glPushMatrix();
+    glTranslatef(pick_center.x, pick_center.y, pick_center.z);
+    glutWireSphere(pick_radius, 16, 16);
+    glPopMatrix();
+
+    // Draw movement vector
+    if (num_picked > 0) {
+      glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+      glBegin(GL_LINES);
+      glVertex3f(last_pick_pos.x, last_pick_pos.y, last_pick_pos.z);
+      glVertex3f(pick_center.x, pick_center.y, pick_center.z);
+      glEnd();
+    }
+
+    glPopAttrib();
+    glUseProgram(m_particles_program);
+  }
+
   glutSwapBuffers();
   glutPostRedisplay();
 }
 
 void keyboardFunc(const unsigned char key, const int x, const int y) {
+  float3 sphere_center;
   switch (key) {
   case '1':
     frameId = 0;
@@ -772,10 +952,14 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
     void one_step();
     one_step();
     break;
-  default:;
+  case 's':
+  case 'S': {
+    break;
+  }
+  default:
+    break;
   }
 }
-
 void reshape(int width, int height) {
   if (height == 0)
     height = 1; // Prevent divide-by-zero errors
@@ -796,7 +980,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/piling.json");
+      config = loadSceneConfig("scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
