@@ -975,6 +975,8 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     // }
     // add elements
     particles->add_elements(split_mass, split_pos, split_vel, n_split);
+    cudaDeviceSynchronize();
+
     _buffer_merge_count.resize(particles->size());
     _buffer_merge.resize(particles->size());
     _buffer_remove.resize(particles->size());
