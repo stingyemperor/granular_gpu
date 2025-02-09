@@ -644,7 +644,7 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
   if (i >= num || atomicOr(&remove[i], 0) != 0 || surface[i] != 1)
     return;
 
-  if (mass_granular[i] >= 2 * min_mass) {
+  if (mass_granular[i] >= 3.0f) {
 
     const float new_mass = mass_granular[i] / 2;
     const float3 new_vel = vel_granular[i];
@@ -668,6 +668,11 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
     split_pos[split_count] = new_pos_2;
 
     atomicAdd(&split_count, 1);
+    // Print details of old particle and new split particle for debugging
+    // printf("Split particle %d:\n  Old mass: %.3f\n  New mass 1: %.3f\n  New "
+    //        "mass 2: %.3f\n",
+    //        i, mass_granular[i] * 2, mass_granular[i],
+    //        split_mass[split_count]);
     // split
   }
   return;
@@ -1123,4 +1128,63 @@ void Solver::upsampled_update(
       upsampled->get_vel_ptr(), num, cell_start_upsampled.addr(),
       cell_start_granular.addr(), cell_start_boundary.addr(), cell_size,
       cell_length);
+}
+
+__global__ void apply_explosion_force(float3 *pos, float3 *vel, float *mass,
+                                      float3 center_of_mass,
+                                      float explosion_force,
+                                      int num_particles) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_particles)
+    return;
+
+  // Calculate direction from center of mass to particle
+  float3 direction = pos[idx] - center_of_mass;
+  float distance = length(direction);
+
+  if (distance < EPSILON_m)
+    return; // Avoid division by zero
+
+  // Normalize direction
+  direction = direction / distance;
+
+  // Force decreases with square of distance
+  float force_magnitude = explosion_force / (1.0f + distance * distance);
+
+  // Apply force as velocity change
+  float3 velocity_change = direction * force_magnitude / mass[idx];
+  vel[idx] += velocity_change;
+}
+
+void Solver::trigger_explosion(std::shared_ptr<GranularParticles> &particles,
+                               float explosion_force) {
+  int num = particles->size();
+  if (num == 0)
+    return;
+
+  // Calculate center of mass
+  float3 center_of_mass = make_float3(0.0f, 0.0f, 0.0f);
+  float total_mass = 0.0f;
+
+  // Use thrust to calculate center of mass
+  thrust::device_ptr<float3> pos_ptr(particles->get_pos_ptr());
+  thrust::device_ptr<float> mass_ptr(particles->get_mass_ptr());
+
+  for (int i = 0; i < num; i++) {
+    float mass = mass_ptr[i];
+    float3 pos = pos_ptr[i];
+    center_of_mass += make_float3(pos.x * mass, pos.y * mass, pos.z * mass);
+    total_mass += mass;
+  }
+
+  if (total_mass > 0) {
+    center_of_mass = center_of_mass / total_mass;
+  }
+
+  // Apply explosion force
+  apply_explosion_force<<<(num + block_size - 1) / block_size, block_size>>>(
+      particles->get_pos_ptr(), particles->get_vel_ptr(),
+      particles->get_mass_ptr(), center_of_mass, explosion_force, num);
+
+  cudaDeviceSynchronize();
 }

@@ -487,107 +487,43 @@ float3 screenToWorld(int x, int y) {
 
   return world_pos;
 }
+
 void mouseFunc(const int button, const int state, const int x, const int y) {
   if (GLUT_DOWN == state) {
     if (GLUT_LEFT_BUTTON == button) {
-      if (glutGetModifiers() & GLUT_ACTIVE_CTRL) {
-        std::cout << "Picking mode activated at screen coords: " << x << ", "
-                  << y << std::endl;
-        picking_mode = true;
-        pick_center = screenToWorld(x, y);
-        std::cout << "World coords: " << pick_center.x << ", " << pick_center.y
-                  << ", " << pick_center.z << std::endl;
-        last_pick_pos = pick_center;
-
-        // Resize picked_particles array
-        if (picked_particles.capacity() < p_system->size() + 1) {
-          picked_particles.resize(p_system->size() + 1);
-        }
-
-        // Reset counter
-        int zero = 0;
-        CUDA_CALL(cudaMemcpy(picked_particles.addr(), &zero, sizeof(int),
-                             cudaMemcpyHostToDevice));
-
-        float3 *pos;
-        CUDA_CALL(cudaGLMapBufferObject((void **)&pos, particlesVBO));
-
-        markParticlesInSphere<<<(p_system->size() + 255) / 256, 256>>>(
-            pos, p_system->size(), pick_center, pick_radius,
-            picked_particles.addr());
-
-        CUDA_CALL(cudaDeviceSynchronize());
-
-        CUDA_CALL(cudaGLUnmapBufferObject(particlesVBO));
-
-        // Get number of picked particles
-        CUDA_CALL(cudaMemcpy(&num_picked, picked_particles.addr(), sizeof(int),
-                             cudaMemcpyDeviceToHost));
-
-        std::cout << "Number of particles picked: " << num_picked << std::endl;
-      } else {
-        mouse_left_down = true;
-      }
+      mouse_left_down = true;
       mousePos[0] = x;
       mousePos[1] = y;
+    } else if (GLUT_RIGHT_BUTTON == button) {
     }
   } else {
-    if (GLUT_LEFT_BUTTON == button) {
-      if (picking_mode) {
-        std::cout << "Picking mode deactivated" << std::endl;
-        picking_mode = false;
-        num_picked = 0;
-      }
-      mouse_left_down = false;
-    }
+    mouse_left_down = false;
   }
+  return;
 }
 
 void motionFunc(const int x, const int y) {
-  if (picking_mode && num_picked > 0) {
-    int dx = x - mousePos[0];
-    int dy = y - mousePos[1];
-
-    // Convert screen movement to world space movement
-    float movement_scale =
-        0.001f; // Adjust this value to control movement sensitivity
-    float3 delta = make_float3(
-        dx * movement_scale,
-        -dy * movement_scale, // Invert Y movement to match screen coordinates
-        0.0f                  // Keep Z movement constant for now
-    );
-
-    // Apply rotation to delta based on current view
-    float rot_x_rad = rot[0] * M_PI / 180.0f;
-    float rot_y_rad = rot[1] * M_PI / 180.0f;
-
-    float3 rotated_delta = make_float3(
-        delta.x * cosf(rot_y_rad) - delta.z * sinf(rot_y_rad), delta.y,
-        delta.x * sinf(rot_y_rad) + delta.z * cosf(rot_y_rad));
-
-    std::cout << "Moving particles by delta: " << rotated_delta.x << ", "
-              << rotated_delta.y << ", " << rotated_delta.z << std::endl;
-
-    float3 *pos;
-    CUDA_CALL(cudaGLMapBufferObject((void **)&pos, particlesVBO));
-
-    updatePickedParticlesPositions<<<(num_picked + 255) / 256, 256>>>(
-        pos, picked_particles.addr() + 1, num_picked, rotated_delta);
-
-    CUDA_CALL(cudaDeviceSynchronize());
-    CUDA_CALL(cudaGLUnmapBufferObject(particlesVBO));
-
-  } else if (mouse_left_down) {
-    int dx = x - mousePos[0];
-    int dy = y - mousePos[1];
+  int dx, dy;
+  if (-1 == mousePos[0] && -1 == mousePos[1]) {
+    mousePos[0] = x;
+    mousePos[1] = y;
+    dx = dy = 0;
+  } else {
+    dx = x - mousePos[0];
+    dy = y - mousePos[1];
+  }
+  if (mouse_left_down) {
     rot[0] += (float(dy) * 180.0f) / 720.0f;
     rot[1] += (float(dx) * 180.0f) / 720.0f;
   }
 
   mousePos[0] = x;
   mousePos[1] = y;
+
   glutPostRedisplay();
+  return;
 }
+
 extern "C" void
 generate_dots(float3 *dot, float3 *color,
               const std::shared_ptr<GranularParticles> particles, int *surface,
@@ -893,32 +829,6 @@ static void displayFunc(void) {
   glPopMatrix();
   glPopMatrix();
 
-  if (picking_mode) {
-    glUseProgram(0);
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
-
-    // Draw picking sphere
-    glDisable(GL_DEPTH_TEST);
-    glColor4f(1.0f, 1.0f, 0.0f, 0.5f);
-
-    glPushMatrix();
-    glTranslatef(pick_center.x, pick_center.y, pick_center.z);
-    glutWireSphere(pick_radius, 16, 16);
-    glPopMatrix();
-
-    // Draw movement vector
-    if (num_picked > 0) {
-      glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
-      glBegin(GL_LINES);
-      glVertex3f(last_pick_pos.x, last_pick_pos.y, last_pick_pos.z);
-      glVertex3f(pick_center.x, pick_center.y, pick_center.z);
-      glEnd();
-    }
-
-    glPopAttrib();
-    glUseProgram(m_particles_program);
-  }
-
   glutSwapBuffers();
   glutPostRedisplay();
 }
@@ -954,6 +864,13 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
     break;
   case 's':
   case 'S': {
+    break;
+  }
+  case 'e':
+  case 'E': {
+    // Trigger explosion with force of 50.0f (adjust this value as needed)
+    auto particles = p_system->get_particles_non_const();
+    p_system->get_solver().trigger_explosion(particles, 50.0f);
     break;
   }
   default:

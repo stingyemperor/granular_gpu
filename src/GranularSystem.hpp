@@ -28,6 +28,11 @@ public:
   auto get_particles() const {
     return static_cast<const std::shared_ptr<GranularParticles>>(_particles);
   }
+
+  auto get_particles_non_const() const {
+    return static_cast<std::shared_ptr<GranularParticles>>(_particles);
+  }
+
   auto get_boundaries() const {
     return static_cast<const std::shared_ptr<GranularParticles>>(_boundaries);
   }
@@ -46,6 +51,8 @@ public:
     // Force synchronization
     cudaDeviceSynchronize();
   }
+
+  Solver &get_solver() { return _solver; }
 
 private:
   std::shared_ptr<GranularParticles> _particles;

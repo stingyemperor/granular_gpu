@@ -92,6 +92,9 @@ public:
     _buffer_remove.resize(size);
   }
 
+  void trigger_explosion(std::shared_ptr<GranularParticles> &particles,
+                         float explosion_force);
+
 private:
   const int _max_iter;
   const int _blend_factor;
