@@ -811,12 +811,14 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     CUDA_CALL(cudaMemcpy(d_split_count, &host_split_count, sizeof(int),
                          cudaMemcpyHostToDevice));
 
+    // TODO: fix the split kernel
     // Run split kernel
-    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), particles->get_surface_ptr(),
-        _buffer_remove.addr(), _buffer_merge.addr(), cell_start_granular.addr(),
-        max_mass, cell_size, split_particles.addr(), d_split_count, density);
+    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+    //     particles->get_vel_ptr(), particles->get_surface_ptr(),
+    //     _buffer_remove.addr(), _buffer_merge.addr(),
+    //     cell_start_granular.addr(), max_mass, cell_size,
+    //     split_particles.addr(), d_split_count, density);
 
     // TODO: Velocity update
     // thrust::transform(thrust::device, particles->get_mass_ptr(),
@@ -975,31 +977,32 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     // add elements
 
     // Get number of splits
-    CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
-                         cudaMemcpyDeviceToHost));
-    CUDA_CALL(cudaFree(d_split_count));
+    // TODO : check order of split
+    // CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
+    //                      cudaMemcpyDeviceToHost));
+    // CUDA_CALL(cudaFree(d_split_count));
 
-    if (host_split_count > 0) {
-      // Prepare arrays for new particles
-      DArray<float> new_masses(host_split_count);
-      DArray<float3> new_positions(host_split_count);
-      DArray<float3> new_velocities(host_split_count);
+    // if (host_split_count > 0) {
+    //   // Prepare arrays for new particles
+    //   DArray<float> new_masses(host_split_count);
+    //   DArray<float3> new_positions(host_split_count);
+    //   DArray<float3> new_velocities(host_split_count);
 
-      // Launch extraction kernel with proper grid/block dimensions
-      dim3 block(256);
-      dim3 grid((host_split_count + block.x - 1) / block.x);
+    //   // Launch extraction kernel with proper grid/block dimensions
+    //   dim3 block(256);
+    //   dim3 grid((host_split_count + block.x - 1) / block.x);
 
-      extract_split_particles_kernel<<<grid, block>>>(
-          split_particles.addr(), new_masses.addr(), new_positions.addr(),
-          new_velocities.addr(), host_split_count);
+    //   extract_split_particles_kernel<<<grid, block>>>(
+    //       split_particles.addr(), new_masses.addr(), new_positions.addr(),
+    //       new_velocities.addr(), host_split_count);
 
-      CUDA_CALL(cudaDeviceSynchronize());
-      CHECK_KERNEL();
+    //   CUDA_CALL(cudaDeviceSynchronize());
+    //   CHECK_KERNEL();
 
-      // Add new particles
-      particles->add_elements(new_masses, new_positions, new_velocities,
-                              host_split_count);
-    }
+    //   // Add new particles
+    //   particles->add_elements(new_masses, new_positions, new_velocities,
+    //                           host_split_count);
+    // }
 
     cudaDeviceSynchronize();
     _buffer_merge_count.resize(particles->size());

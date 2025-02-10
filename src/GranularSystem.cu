@@ -211,10 +211,12 @@ void GranularSystem::neighbor_search_boundary(
     throw;
   }
 
-  // sort the position with the cell indexes
   try {
-    thrust::sort_by_key(thrust::device, _buffer_int.addr(),
-                        _buffer_int.addr() + num, particles->get_pos_ptr());
+    thrust::sort_by_key(
+        thrust::device, particles->get_particle_2_cell(),
+        particles->get_particle_2_cell() + num,
+        thrust::make_zip_iterator(thrust::make_tuple(
+            particles->get_pos_ptr(), particles->get_is_animated_ptr())));
   } catch (const std::exception &e) {
     std::cerr << "Error in sort_by_key: " << e.what() << std::endl;
     throw;
@@ -390,7 +392,7 @@ float GranularSystem::step() {
   CUDA_CALL(cudaEventCreate(&start));
   CUDA_CALL(cudaEventCreate(&stop));
   CUDA_CALL(cudaEventRecord(start, 0));
-
+  neighbor_search_boundary(_boundaries, _cell_start_boundary);
   neighbor_search_granular(_particles, _cell_start_particle);
   neighbor_search_upsampled(_upsampled, _cell_start_upsampled);
 

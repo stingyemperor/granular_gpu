@@ -1,11 +1,13 @@
 #pragma once
+#include "DArray.hpp"
 #include "Particles.hpp"
 
 class GranularParticles final : public Particles {
 public:
   explicit GranularParticles(const std::vector<float3> &p)
       : Particles(p), _mass(p.size()), _scaled_mass(p.size()),
-        _surface(p.size()), _particle_2_cell(p.size()), _num_surface(p.size()) {
+        _surface(p.size()), _particle_2_cell(p.size()), _num_surface(p.size()),
+        _is_animated(p.size()) {
     CUDA_CALL(cudaMemcpy(_pos.addr(), &p[0], sizeof(float3) * p.size(),
                          cudaMemcpyHostToDevice));
   }
@@ -36,6 +38,8 @@ public:
     Particles::add_elements(pos, vel);
   }
 
+  int *get_is_animated_ptr() { return _is_animated.addr(); }
+
   virtual ~GranularParticles() noexcept {}
 
 protected:
@@ -44,4 +48,5 @@ protected:
   DArray<int> _surface;
   DArray<int> _num_surface;
   DArray<int> _particle_2_cell; // lookup key
+  DArray<int> _is_animated;     // 1 if particle should be animated, 0 otherwise
 };

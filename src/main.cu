@@ -3,6 +3,7 @@
 #include "GranularSystem.hpp"
 #include "ShaderUtility.hpp"
 #include "VBO.hpp"
+#include "helper_math.h"
 #include <GL/freeglut.h>
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
@@ -83,6 +84,21 @@ struct SceneConfig {
   int scene;
 };
 
+struct AnimationState {
+  bool is_animating = false;
+  float animation_time = 0.0f;
+  int start_index = 0;
+  int num_particles = 0;
+  float3 translation_direction =
+      make_float3(-0.1f, 0.0f, 0.0f); // Translation direction
+  float translation_speed = 5.0f;
+  bool translation_complete = false;
+  float rotation_angle = 0.0f;
+  float rotation_speed = 90.0f; // degrees per second
+  float3 rotation_center = make_float3(0.0f, 0.0f, 0.0f);
+};
+
+AnimationState animation_state;
 enum Scene { PILING = 0, BOX = 1 };
 
 SceneConfig loadSceneConfig(const std::string &config_file) {
@@ -128,6 +144,28 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
                                ceil(config.space_size.z / config.cell_length));
 
   return config;
+}
+
+std::vector<float3> readBoundaryParticlesFromFile(const std::string &filename,
+                                                  int &start_index) {
+  std::vector<float3> positions;
+  std::ifstream file(filename);
+
+  if (!file.is_open()) {
+    throw std::runtime_error("Unable to open boundary particles file: " +
+                             filename);
+  }
+
+  float x, y, z;
+  while (file >> x >> y >> z) {
+    positions.push_back(make_float3(x, y, z));
+  }
+
+  // Store the start index before adding new particles
+  start_index = positions.size();
+
+  file.close();
+  return positions;
 }
 
 void saveUpsampledPositionsToVTK(
@@ -232,8 +270,7 @@ void init_granular_system() {
                                                      particle_radius);
 
   for (const auto &particle : pos) {
-    for (int n = 0; n < 12;
-         ++n) { // Generate 10 upsampled particles per original particle
+    for (int n = 0; n < 12; ++n) {
       float3 offset =
           make_float3(distribution(generator), distribution(generator),
                       distribution(generator));
@@ -304,11 +341,143 @@ void init_granular_system() {
     p += boundary_translation;
   }
 
+  // Read additional boundary particles from file if specified
+  int start_index = pos.size(); // Store the starting index
+
+  try {
+    if (std::filesystem::exists("obj/bucket.txt")) {
+      int file_start_index =
+          pos.size(); // Store current size before adding new particles
+      std::vector<float3> additional_particles =
+          readBoundaryParticlesFromFile("obj/bucket.txt", file_start_index);
+
+      // Create temporary vector to mark animated particles
+      std::vector<int> animated_markers(
+          pos.size(), 0); // Initialize existing particles as not animated
+      std::vector<int> new_animated(additional_particles.size(),
+                                    1); // Mark new particles as animated
+      animated_markers.insert(animated_markers.end(), new_animated.begin(),
+                              new_animated.end());
+
+      // Store animation state
+      animation_state.start_index = file_start_index;
+      animation_state.num_particles = additional_particles.size();
+      animation_state.is_animating = true;
+      animation_state.animation_time = 0.0f;
+
+      // Calculate rotation center
+      float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+      for (const auto &p : additional_particles) {
+        centroid += p;
+      }
+      animation_state.rotation_center =
+          centroid / (float)additional_particles.size();
+
+      // Append particles
+      pos.insert(pos.end(), additional_particles.begin(),
+                 additional_particles.end());
+
+      // Create boundary particles with the animated markers
+      auto boundary_particles = std::make_shared<GranularParticles>(pos);
+
+      // Copy animated markers to device
+      CUDA_CALL(cudaMemcpy(
+          boundary_particles->get_is_animated_ptr(), animated_markers.data(),
+          animated_markers.size() * sizeof(int), cudaMemcpyHostToDevice));
+    }
+  } catch (const std::exception &e) {
+    std::cerr << "Error reading boundary particles: " << e.what() << std::endl;
+  }
+
   auto boundary_particles = std::make_shared<GranularParticles>(pos);
 
   p_system = std::make_shared<GranularSystem>(
       granular_particles, boundary_particles, upsampled_particles, space_size,
       cell_length, dt, G, cell_size, density, upsampled_particle_radius);
+}
+
+__global__ void animateParticles(float3 *positions, int *is_animated,
+                                 int num_particles, float3 translation,
+                                 float rotation_angle, float3 rotation_center) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_particles)
+    return;
+
+  // Only animate if this particle is marked for animation
+  if (is_animated[idx] == 1) {
+    float3 pos = positions[idx];
+
+    // Apply translation
+    pos += translation;
+
+    // Apply rotation around z-axis
+    if (rotation_angle != 0.0f) {
+      // Translate to origin
+      pos.x -= rotation_center.x;
+      pos.y -= rotation_center.y;
+
+      float angle_rad = rotation_angle * M_PI / 180.0f;
+      float cos_theta = cosf(angle_rad);
+      float sin_theta = sinf(angle_rad);
+
+      float new_x = pos.x * cos_theta - pos.y * sin_theta;
+      float new_y = pos.x * sin_theta + pos.y * cos_theta;
+
+      pos.x = new_x + rotation_center.x;
+      pos.y = new_y + rotation_center.y;
+    }
+
+    positions[idx] = pos;
+  }
+}
+
+void updateAnimation(float dt) {
+  if (!animation_state.is_animating)
+    return;
+
+  animation_state.animation_time += dt;
+
+  // Calculate translation and rotation based on animation time
+  float3 translation = make_float3(0.0f, 0.0f, 0.0f);
+  float rotation = 0.0f;
+
+  // First 5 seconds: translation
+  if (animation_state.animation_time <= 5.0f &&
+      !animation_state.translation_complete) {
+    translation = animation_state.translation_direction *
+                  animation_state.translation_speed * dt;
+  } else if (!animation_state.translation_complete) {
+    animation_state.translation_complete = true;
+    animation_state.animation_time = 0.0f; // Reset timer for rotation
+  }
+
+  // After translation: rotation
+  if (animation_state.translation_complete &&
+      animation_state.rotation_angle < 90.0f) {
+    float rotation_delta = animation_state.rotation_speed * dt;
+    animation_state.rotation_angle += rotation_delta;
+    rotation = rotation_delta;
+
+    if (animation_state.rotation_angle >= 90.0f) {
+      animation_state.is_animating = false; // Stop animation
+    }
+  }
+
+  // Apply animation
+
+  if (animation_state.is_animating) {
+    const int block_size = 256;
+    int num_blocks =
+        (p_system->get_boundaries()->size() + block_size - 1) / block_size;
+
+    animateParticles<<<num_blocks, block_size>>>(
+        p_system->get_boundaries()->get_pos_ptr(),
+        p_system->get_boundaries()->get_is_animated_ptr(),
+        p_system->get_boundaries()->size(), translation, rotation,
+        animation_state.rotation_center);
+
+    CUDA_CALL(cudaDeviceSynchronize());
+  }
 }
 
 void resizeVBO(GLuint *vbo, size_t new_size) {
@@ -688,7 +857,7 @@ void renderBoundaryCorners() {
   // Cleanup state
   glDisableClientState(GL_VERTEX_ARRAY);
   glDisableClientState(GL_COLOR_ARRAY);
-  glPointSize(1.0f); // Reset point size
+  glPointSize(10.0f); // Reset point size
 
   // Delete VBOs in destructor or cleanup
   static bool first_run = true;
@@ -739,6 +908,7 @@ void initGL(void) {
 
 static void displayFunc(void) {
   if (running) {
+    updateAnimation(dt);
     one_step();
   }
 
@@ -824,7 +994,8 @@ static void displayFunc(void) {
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
   renderUpsampledParticles();
-  // renderBoundaryCorners();
+
+  renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
