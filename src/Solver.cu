@@ -631,51 +631,70 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
   }
 }
 
+struct SplitParticle {
+  float3 pos;
+  float3 vel;
+  float mass;
+  bool valid;
+};
+
 __global__ void split_gpu(const int num, float3 *pos_granular,
                           float *mass_granular, float3 *vel_granular,
                           int *surface, int *remove, float *merge,
-                          int *cell_start_granular, float min_mass,
-                          const int3 cell_size, float *split_mass,
-                          float3 *split_pos, float3 *split_vel,
-                          int &split_count, float density) {
+                          int *cell_start_granular, const float max_mass,
+                          const int3 cell_size, SplitParticle *split_particles,
+                          int *split_count, const float density) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-  // Merging/removing particles cannot split
-  if (i >= num || atomicOr(&remove[i], 0) != 0 || surface[i] != 1)
+  if (i >= num)
     return;
 
-  if (mass_granular[i] >= 3.0f) {
-
-    const float new_mass = mass_granular[i] / 2;
-    const float3 new_vel = vel_granular[i];
-
-    // TODO: make the position selection random
-
-    const float r_i = cbrtf((3 * mass_granular[i]) / (4 * pi * density));
-
-    const float3 new_pos_1 = make_float3(pos_granular[i].x + r_i,
-                                         pos_granular[i].y, pos_granular[i].z);
-    const float3 new_pos_2 = make_float3(pos_granular[i].x - r_i,
-                                         pos_granular[i].y, pos_granular[i].z);
-
-    mass_granular[i] = new_mass;
-    atomicExch(&split_mass[split_count], new_mass);
-
-    vel_granular[i] = new_vel;
-    split_vel[split_count] = new_vel;
-
-    pos_granular[i] = new_pos_1;
-    split_pos[split_count] = new_pos_2;
-
-    atomicAdd(&split_count, 1);
-    // Print details of old particle and new split particle for debugging
-    // printf("Split particle %d:\n  Old mass: %.3f\n  New mass 1: %.3f\n  New "
-    //        "mass 2: %.3f\n",
-    //        i, mass_granular[i] * 2, mass_granular[i],
-    //        split_mass[split_count]);
-    // split
+  // Only process particles that aren't already being removed/merged
+  if (atomicOr(&remove[i], 0) != 0 || surface[i] != 1 ||
+      mass_granular[i] < 3.0f) {
+    return;
   }
-  return;
+
+  const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI * density));
+
+  // Atomically reserve a slot for the new particle
+  int new_idx = atomicAdd(split_count, 1);
+
+  // Create new particle
+  SplitParticle new_particle;
+  new_particle.mass = mass_granular[i] / 2.0f;
+  new_particle.vel = vel_granular[i];
+
+  // Position offset for split particles
+  float3 offset = make_float3(r_i, 0.0f, 0.0f);
+
+  // Update original particle
+  mass_granular[i] = new_particle.mass;
+  pos_granular[i] = pos_granular[i] + offset;
+
+  // Set new particle position
+  new_particle.pos = pos_granular[i] - 2.0f * offset;
+  new_particle.valid = true;
+
+  // Store new particle data
+  split_particles[new_idx] = new_particle;
+}
+
+// Define the extraction kernel properly
+__global__ void extract_split_particles_kernel(SplitParticle *splits,
+                                               float *masses, float3 *positions,
+                                               float3 *velocities,
+                                               int split_count) {
+
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= split_count)
+    return;
+
+  if (splits[idx].valid) {
+    masses[idx] = splits[idx].mass;
+    positions[idx] = splits[idx].pos;
+    velocities[idx] = splits[idx].vel;
+  }
 }
 
 struct merge_functor {
@@ -753,20 +772,6 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     cudaDeviceSynchronize();
 
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-      std::cerr << "Kernel launch failed: " << cudaGetErrorString(err)
-                << std::endl;
-      throw std::runtime_error("Kernel launch failed");
-    }
-
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-      std::cerr << "Kernel execution failed: " << cudaGetErrorString(err);
-      // << std::endl;
-      throw std::runtime_error("Kernel execution failed");
-    }
-
     // Print info about particles being removed
     // std::vector<int> host_remove(num);
     // std::vector<float> host_mass(num);
@@ -795,30 +800,23 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     //           << "\n";
 
     // Run split kernel
-    int n_split = 0;
-    DArray<float> split_mass(1000);
-    DArray<float3> split_pos(1000);
-    DArray<float3> split_vel(1000);
 
+    // Create and initialize split counter on device
+    // Allocate space for split particles
+    DArray<SplitParticle> split_particles(num); // Maximum possible splits
+    int host_split_count = 0;
+
+    int *d_split_count;
+    CUDA_CALL(cudaMalloc(&d_split_count, sizeof(int)));
+    CUDA_CALL(cudaMemcpy(d_split_count, &host_split_count, sizeof(int),
+                         cudaMemcpyHostToDevice));
+
+    // Run split kernel
     split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
         num, particles->get_pos_ptr(), particles->get_mass_ptr(),
         particles->get_vel_ptr(), particles->get_surface_ptr(),
         _buffer_remove.addr(), _buffer_merge.addr(), cell_start_granular.addr(),
-        max_mass, cell_size, split_mass.addr(), split_pos.addr(),
-        split_vel.addr(), n_split, density);
-
-    cudaDeviceSynchronize();
-
-    split_mass.resize(n_split);
-    split_pos.resize(n_split);
-    split_vel.resize(n_split);
-
-    // Check for kernel errors
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-      throw std::runtime_error(std::string("Merge kernel error: ") +
-                               cudaGetErrorString(err));
-    }
+        max_mass, cell_size, split_particles.addr(), d_split_count, density);
 
     // TODO: Velocity update
     // thrust::transform(thrust::device, particles->get_mass_ptr(),
@@ -887,6 +885,7 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     _buffer_merge.compact(_buffer_remove);
     _buffer_remove.compact(_buffer_remove);
 
+    CUDA_CALL(cudaDeviceSynchronize());
     // Get new size after compacting
     const int new_num = particles->size();
 
@@ -974,21 +973,45 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     //             << std::endl;
     // }
     // add elements
-    particles->add_elements(split_mass, split_pos, split_vel, n_split);
-    cudaDeviceSynchronize();
 
+    // Get number of splits
+    CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
+                         cudaMemcpyDeviceToHost));
+    CUDA_CALL(cudaFree(d_split_count));
+
+    if (host_split_count > 0) {
+      // Prepare arrays for new particles
+      DArray<float> new_masses(host_split_count);
+      DArray<float3> new_positions(host_split_count);
+      DArray<float3> new_velocities(host_split_count);
+
+      // Launch extraction kernel with proper grid/block dimensions
+      dim3 block(256);
+      dim3 grid((host_split_count + block.x - 1) / block.x);
+
+      extract_split_particles_kernel<<<grid, block>>>(
+          split_particles.addr(), new_masses.addr(), new_positions.addr(),
+          new_velocities.addr(), host_split_count);
+
+      CUDA_CALL(cudaDeviceSynchronize());
+      CHECK_KERNEL();
+
+      // Add new particles
+      particles->add_elements(new_masses, new_positions, new_velocities,
+                              host_split_count);
+    }
+
+    cudaDeviceSynchronize();
     _buffer_merge_count.resize(particles->size());
     _buffer_merge.resize(particles->size());
     _buffer_remove.resize(particles->size());
-
-    cudaDeviceSynchronize();
 
     // change in mass
 
     // Print total mass after
     // auto m_t_n = thrust::device_pointer_cast(particles->get_mass_ptr());
-    // const float new_mass = thrust::reduce(m_t_n, m_t_n + particles->size(),
-    // 0,
+    // const float new_mass = thrust::reduce(m_t_n, m_t_n +
+    // particles->size(), 0,
     //                                       thrust::plus<float>());
     // std::cout << "Total mass after: " << new_mass << "\n";
     // if ((new_mass - old_mass) != 0) {
