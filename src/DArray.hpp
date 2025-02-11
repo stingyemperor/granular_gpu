@@ -70,7 +70,8 @@ public:
     cudaMemGetInfo(&free_mem, &total_mem);
 
     if (removal_flags.length() != _length) {
-      std::cerr << "Removal flags length (" << removal_flags.length()
+      std::cerr << "Array type: " << typeid(T).name()
+                << "\nRemoval flags length (" << removal_flags.length()
                 << ") doesn't match array length (" << _length << ")"
                 << std::endl;
       throw std::runtime_error("Removal flags length mismatch");
@@ -128,22 +129,42 @@ public:
   }
 
   // Append elements from another DArray
-  void append(const DArray<T> &other) {
-    const unsigned int new_length = _length + other.length();
 
-    // Resize if necessary
-    if (new_length > _capacity) {
-      resize(std::max(new_length, _capacity * 2));
+  void append(const DArray<T> &other) {
+    const unsigned int other_length = other.length();
+    if (other_length == 0) {
+      return; // Nothing to append
     }
 
-    // Create thrust device pointers
-    thrust::device_ptr<T> dst_ptr(_addr + _length);
-    thrust::device_ptr<const T> src_ptr(other.addr());
+    const unsigned int new_length = _length + other_length;
+
+    // Check if we need to resize
+    if (new_length > _capacity) {
+      // Resize with some extra capacity to avoid frequent resizes
+      unsigned int new_capacity = std::max(new_length, _capacity * 2);
+      resize(new_capacity);
+    }
 
     // Copy the new elements
-    thrust::copy(thrust::device, src_ptr, src_ptr + other.length(), dst_ptr);
+    cudaError_t err =
+        cudaMemcpy(_addr + _length, // Destination: current end of array
+                   other.addr(),    // Source: start of other array
+                   sizeof(T) * other_length, // Size of data to copy
+                   cudaMemcpyDeviceToDevice);
 
+    if (err != cudaSuccess) {
+      throw std::runtime_error(std::string("Failed to append array: ") +
+                               cudaGetErrorString(err));
+    }
+
+    // Update length
     _length = new_length;
+
+    // Verify the append was successful
+    cudaDeviceSynchronize();
+    if (cudaGetLastError() != cudaSuccess) {
+      throw std::runtime_error("Error occurred during array append");
+    }
   }
 
   // Remove elements within a range

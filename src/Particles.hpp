@@ -26,8 +26,30 @@ public:
   }
 
   void add_elements(const DArray<float3> &pos, const DArray<float3> &vel) {
+    // Validate input sizes match
+    if (pos.length() != vel.length()) {
+      throw std::runtime_error(
+          "Position and velocity arrays must have same length");
+    }
+
+    const unsigned int add_count = pos.length();
+    const unsigned int new_size = _pos.length() + add_count;
+
+    // Resize arrays if needed
+    if (new_size > _pos.capacity()) {
+      _pos.resize(new_size);
+      _vel.resize(new_size);
+    }
+
+    // Append new elements
     _pos.append(pos);
     _vel.append(vel);
+
+    // Verify sizes after append
+    if (_pos.length() != _vel.length()) {
+      throw std::runtime_error(
+          "Position and velocity array sizes mismatch after append");
+    }
   }
 
   virtual ~Particles() noexcept {}

@@ -52,7 +52,7 @@ static float zoom = 0.3f;
 static int frameId = 0;
 static float totalTime = 0.0f;
 bool running = false;
-bool show_surface = false;
+bool show_surface = true;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
@@ -449,6 +449,62 @@ void init_granular_system() {
     std::cout << "Start index: " << animation_state.start_index << std::endl;
 
     is_move = true;
+
+  } else if (scene == Scene::FUNNEL) {
+    int base_boundary_count = pos.size();
+    std::vector<int> animated_markers(base_boundary_count, 0);
+
+    // top and bottom
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(i, 0, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, compact_size.y - 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+
+    for (auto &p : pos) {
+      p += boundary_translation;
+    }
+    try {
+      if (std::filesystem::exists(obj_file)) {
+
+        std::vector<float3> additional_particles =
+            readBoundaryParticlesFromFile(obj_file,
+                                          animation_state.start_index);
+
+        // Calculate rotation center
+        float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+        for (const auto &p : additional_particles) {
+          centroid += p;
+        }
+        animation_state.rotation_center =
+            centroid / (float)additional_particles.size();
+
+        // translate the boudnary particles
+        for (auto &p : additional_particles) {
+          p += make_float3(2.5f, 0.0f, 0.5f);
+
+          float angle = 270.0f * (M_PI / 180.0f);
+          float x = p.x;
+          float y = p.z;
+          p.x = x * cos(angle) - y * sin(angle);
+          p.y = x * sin(angle) + y * cos(angle);
+        }
+
+        // Append new particles
+        pos.insert(pos.end(), additional_particles.begin(),
+                   additional_particles.end());
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "Error reading boundary particles: " << e.what()
+                << std::endl;
+    }
+
+    boundary_particles = std::make_shared<GranularParticles>(pos);
   }
 
   p_system = std::make_shared<GranularSystem>(
@@ -1054,9 +1110,9 @@ static void displayFunc(void) {
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
-  renderUpsampledParticles();
+  // renderUpsampledParticles();
 
-  renderBoundaryCorners();
+  // renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -1102,7 +1158,7 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
   case 'E': {
     // Trigger explosion with force of 50.0f (adjust this value as needed)
     auto particles = p_system->get_particles_non_const();
-    p_system->get_solver().trigger_explosion(particles, 50.0f);
+    p_system->get_solver().trigger_explosion(particles, 20.0f);
     break;
   }
   default:
@@ -1129,7 +1185,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/excavator.json");
+      config = loadSceneConfig("scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

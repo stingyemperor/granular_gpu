@@ -416,8 +416,9 @@ float GranularSystem::step() {
 
     cudaDeviceSynchronize();
 
-    _solver.adaptive_sampling(_particles, _cell_start_particle, _max_mass,
-                              _cell_size, _space_size, _cell_length, _density);
+    _solver.adaptive_sampling(_particles, _boundaries, _cell_start_particle,
+                              _cell_start_boundary, _max_mass, _cell_size,
+                              _space_size, _cell_length, _density);
 
   } catch (const char *s) {
     std::cout << s << "\n";

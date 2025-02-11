@@ -48,7 +48,7 @@ public:
             const DArray<int> &cell_start_boundary, float3 space_size,
             int3 cell_size, float cell_length, float dt, float3 G,
             const float density);
-  ~Solver() {};
+  ~Solver(){};
   void project(std::shared_ptr<GranularParticles> &particles,
                const std::shared_ptr<GranularParticles> &boundaries,
                const DArray<int> &cell_start_granular,
@@ -67,11 +67,14 @@ public:
   void final_update(std::shared_ptr<GranularParticles> &particles, float dt);
 
   void adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
+                         const std::shared_ptr<GranularParticles> &boundaries,
                          const DArray<int> &cell_start_granular,
+                         const DArray<int> &cell_start_boundary,
                          const float max_mass, int3 cell_size,
                          float3 space_size, float cell_length,
                          const float density);
   void split(std::shared_ptr<GranularParticles> &particles);
+  void distribute_mass(std::shared_ptr<GranularParticles> &particles);
 
   void upsampled_update(std::shared_ptr<GranularParticles> &particles,
                         const std::shared_ptr<GranularParticles> &boundaries,

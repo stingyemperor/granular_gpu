@@ -638,48 +638,120 @@ struct SplitParticle {
   bool valid;
 };
 
+__device__ bool
+check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
+                   int *cell_start_granular, int *cell_start_boundary,
+                   const int3 cell_size, const float cell_length,
+                   const float r_i, float3 &empty_cell_center,
+                   int &neighbor_count) {
+  neighbor_count = 0;
+  bool found_empty = false;
+  const float max_dist = 2.0f * r_i;
+
+  // Loop through the 27 neighboring cells
+  for (int m = 0; m < 27; m++) {
+    const auto cellID = particlePos2cellIdx(
+        make_int3(pos / cell_length) +
+            make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
+        cell_size);
+
+    if (cellID == (cell_size.x * cell_size.y * cell_size.z))
+      continue;
+
+    // Check if cell is empty (but not the center cell)
+    if (!found_empty && m != 13) { // m == 13 is the center cell
+      if (cell_start_granular[cellID] == cell_start_granular[cellID + 1] &&
+          cell_start_boundary[cellID] == cell_start_boundary[cellID + 1]) {
+        // Calculate cell center position
+        int3 cell_pos = make_int3(pos / cell_length) +
+                        make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1);
+        empty_cell_center = make_float3((cell_pos.x + 0.5f) * cell_length,
+                                        (cell_pos.y + 0.5f) * cell_length,
+                                        (cell_pos.z + 0.5f) * cell_length);
+        found_empty = true;
+      }
+    }
+
+    // Count granular neighbors in this cell
+    int j = cell_start_granular[cellID];
+    while (j < cell_start_granular[cellID + 1]) {
+      const float3 pos_j = pos_granular[j];
+      const float dis = length(pos - pos_j);
+      if (dis > 0.0f && dis < max_dist) { // Exclude self
+        neighbor_count++;
+        if (neighbor_count >= 5) {
+          return false; // Too many neighbors
+        }
+      }
+      j++;
+    }
+
+    // Count boundary neighbors in this cell
+    j = cell_start_boundary[cellID];
+    while (j < cell_start_boundary[cellID + 1]) {
+      const float3 pos_j = pos_boundary[j];
+      const float dis = length(pos - pos_j);
+      if (dis < max_dist) {
+        neighbor_count++;
+        if (neighbor_count >= 2) {
+          return false; // Too many neighbors
+        }
+      }
+      j++;
+    }
+  }
+
+  return found_empty; // Must have found an empty cell and have fewer than 5
+                      // neighbors
+}
+
 __global__ void split_gpu(const int num, float3 *pos_granular,
                           float *mass_granular, float3 *vel_granular,
-                          int *surface, int *remove, float *merge,
-                          int *cell_start_granular, const float max_mass,
+                          float3 *pos_boundary, int *surface, int *remove,
+                          float *merge, int *cell_start_granular,
+                          int *cell_start_boundary, const float max_mass,
                           const int3 cell_size, SplitParticle *split_particles,
-                          int *split_count, const float density) {
+                          int *split_count, const float density,
+                          const float cell_length) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
     return;
 
-  // Only process particles that aren't already being removed/merged
+  // Check if particle is marked for removal or is a surface particle
   if (atomicOr(&remove[i], 0) != 0 || surface[i] != 1 ||
-      mass_granular[i] < 3.0f) {
+      mass_granular[i] <= 3.0f) {
     return;
   }
 
   const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI * density));
 
-  // Atomically reserve a slot for the new particle
+  // Check neighborhood in a single pass
+  float3 empty_cell_center;
+  int neighbor_count;
+  if (!check_neighborhood(pos_granular[i], pos_granular, pos_boundary,
+                          cell_start_granular, cell_start_boundary, cell_size,
+                          cell_length, r_i, empty_cell_center,
+                          neighbor_count)) {
+    return; // Either too many neighbors or no empty cells
+  }
+
+  // Atomic operation to reserve space for new particle
   int new_idx = atomicAdd(split_count, 1);
 
   // Create new particle
   SplitParticle new_particle;
   new_particle.mass = mass_granular[i] / 2.0f;
   new_particle.vel = vel_granular[i];
-
-  // Position offset for split particles
-  float3 offset = make_float3(r_i, 0.0f, 0.0f);
+  new_particle.pos = empty_cell_center;
+  new_particle.valid = true;
 
   // Update original particle
   mass_granular[i] = new_particle.mass;
-  pos_granular[i] = pos_granular[i] + offset;
-
-  // Set new particle position
-  new_particle.pos = pos_granular[i] - 2.0f * offset;
-  new_particle.valid = true;
 
   // Store new particle data
   split_particles[new_idx] = new_particle;
 }
-
 // Define the extraction kernel properly
 __global__ void extract_split_particles_kernel(SplitParticle *splits,
                                                float *masses, float3 *positions,
@@ -708,11 +780,12 @@ struct merge_functor {
 };
 
 // Host function
-void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
-                               const DArray<int> &cell_start_granular,
-                               const float max_mass, int3 cell_size,
-                               float3 space_size, float cell_length,
-                               const float density) {
+void Solver::adaptive_sampling(
+    std::shared_ptr<GranularParticles> &particles,
+    const std::shared_ptr<GranularParticles> &boundaries,
+    const DArray<int> &cell_start_granular,
+    const DArray<int> &cell_start_boundary, const float max_mass,
+    int3 cell_size, float3 space_size, float cell_length, const float density) {
   const int num = particles->size();
   if (num == 0)
     return;
@@ -754,11 +827,8 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     const float old_mass =
         thrust::reduce(m_t, m_t + num, 0, thrust::plus<float>());
 
-    // Launch kernel with error checking
-    cudaError_t err = cudaSuccess;
-
     // Run merge kernel
-    if (t_merge_iter == 6) {
+    if (t_merge_iter == 5) {
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),
@@ -769,8 +839,6 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
       t_merge_iter = 0;
     }
     t_merge_iter++;
-
-    cudaDeviceSynchronize();
 
     // Print info about particles being removed
     // std::vector<int> host_remove(num);
@@ -801,6 +869,22 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     // Run split kernel
 
+    // TODO: Velocity update
+    // thrust::transform(thrust::device, particles->get_mass_ptr(),
+    //                   particles->get_mass_ptr() + num,
+    //                   _buffer_merge.addr(), particles->get_mass_ptr(),
+    //                   thrust::plus<float>());
+    //
+
+    CUDA_CALL(cudaDeviceSynchronize());
+
+    merge_count_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, _buffer_merge.addr(), particles->get_mass_ptr(),
+        particles->get_vel_ptr(), _buffer_merge_count.addr(),
+        _buffer_remove.addr(), _buffer_merge_velocity.addr(), _blend_factor);
+
+    CUDA_CALL(cudaDeviceSynchronize());
+
     // Create and initialize split counter on device
     // Allocate space for split particles
     DArray<SplitParticle> split_particles(num); // Maximum possible splits
@@ -810,29 +894,15 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
     CUDA_CALL(cudaMalloc(&d_split_count, sizeof(int)));
     CUDA_CALL(cudaMemcpy(d_split_count, &host_split_count, sizeof(int),
                          cudaMemcpyHostToDevice));
-
     // TODO: fix the split kernel
     // Run split kernel
-    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-    //     particles->get_vel_ptr(), particles->get_surface_ptr(),
-    //     _buffer_remove.addr(), _buffer_merge.addr(),
-    //     cell_start_granular.addr(), max_mass, cell_size,
-    //     split_particles.addr(), d_split_count, density);
-
-    // TODO: Velocity update
-    // thrust::transform(thrust::device, particles->get_mass_ptr(),
-    //                   particles->get_mass_ptr() + num,
-    //                   _buffer_merge.addr(), particles->get_mass_ptr(),
-    //                   thrust::plus<float>());
-    //
-
-    merge_count_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, _buffer_merge.addr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), _buffer_merge_count.addr(),
-        _buffer_remove.addr(), _buffer_merge_velocity.addr(), _blend_factor);
-
-    CUDA_CALL(cudaDeviceSynchronize());
+    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+        particles->get_vel_ptr(), boundaries->get_pos_ptr(),
+        particles->get_surface_ptr(), _buffer_remove.addr(),
+        _buffer_merge.addr(), cell_start_granular.addr(),
+        cell_start_boundary.addr(), max_mass, cell_size, split_particles.addr(),
+        d_split_count, density, cell_length);
 
     // // Print final state before removal
     // std::cout << "\nFinal state before removal:\n";
@@ -882,10 +952,33 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     CUDA_CALL(cudaDeviceSynchronize());
 
-    particles->remove_elements(_buffer_remove);
-    _buffer_merge_count.compact(_buffer_remove);
-    _buffer_merge.compact(_buffer_remove);
-    _buffer_remove.compact(_buffer_remove);
+    try {
+      particles->remove_elements(_buffer_remove);
+    } catch (const std::exception &e) {
+      std::cerr << "Error compacting particles: " << e.what() << std::endl;
+      throw;
+    }
+
+    try {
+      _buffer_merge_count.compact(_buffer_remove);
+    } catch (const std::exception &e) {
+      std::cerr << "Error compacting merge count: " << e.what() << std::endl;
+      throw;
+    }
+
+    try {
+      _buffer_merge.compact(_buffer_remove);
+    } catch (const std::exception &e) {
+      std::cerr << "Error compacting merge buffer: " << e.what() << std::endl;
+      throw;
+    }
+
+    try {
+      _buffer_remove.compact(_buffer_remove);
+    } catch (const std::exception &e) {
+      std::cerr << "Error compacting remove buffer: " << e.what() << std::endl;
+      throw;
+    }
 
     CUDA_CALL(cudaDeviceSynchronize());
     // Get new size after compacting
@@ -978,37 +1071,64 @@ void Solver::adaptive_sampling(std::shared_ptr<GranularParticles> &particles,
 
     // Get number of splits
     // TODO : check order of split
-    // CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
-    //                      cudaMemcpyDeviceToHost));
-    // CUDA_CALL(cudaFree(d_split_count));
+    CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
+                         cudaMemcpyDeviceToHost));
+    CUDA_CALL(cudaFree(d_split_count));
 
-    // if (host_split_count > 0) {
-    //   // Prepare arrays for new particles
-    //   DArray<float> new_masses(host_split_count);
-    //   DArray<float3> new_positions(host_split_count);
-    //   DArray<float3> new_velocities(host_split_count);
+    if (host_split_count > 0) {
+      // Prepare arrays for new particles
+      DArray<float> new_masses(host_split_count);
+      DArray<float3> new_positions(host_split_count);
+      DArray<float3> new_velocities(host_split_count);
 
-    //   // Launch extraction kernel with proper grid/block dimensions
-    //   dim3 block(256);
-    //   dim3 grid((host_split_count + block.x - 1) / block.x);
+      // Create zero-filled arrays for buffers
+      DArray<int> new_remove(host_split_count);
+      DArray<int> new_merge_count(host_split_count);
+      DArray<float> new_merge(host_split_count);
 
-    //   extract_split_particles_kernel<<<grid, block>>>(
-    //       split_particles.addr(), new_masses.addr(), new_positions.addr(),
-    //       new_velocities.addr(), host_split_count);
+      // Fill new arrays with zeros
+      thrust::fill(
+          thrust::device, thrust::device_pointer_cast(new_remove.addr()),
+          thrust::device_pointer_cast(new_remove.addr() + host_split_count), 0);
+      thrust::fill(thrust::device,
+                   thrust::device_pointer_cast(new_merge_count.addr()),
+                   thrust::device_pointer_cast(new_merge_count.addr() +
+                                               host_split_count),
+                   0);
+      thrust::fill(
+          thrust::device, thrust::device_pointer_cast(new_merge.addr()),
+          thrust::device_pointer_cast(new_merge.addr() + host_split_count),
+          0.0f);
 
-    //   CUDA_CALL(cudaDeviceSynchronize());
-    //   CHECK_KERNEL();
+      // Extract split particles
 
-    //   // Add new particles
-    //   particles->add_elements(new_masses, new_positions, new_velocities,
-    //                           host_split_count);
-    // }
+      dim3 block(256);
+      dim3 grid((host_split_count + block.x - 1) / block.x);
 
-    cudaDeviceSynchronize();
-    _buffer_merge_count.resize(particles->size());
-    _buffer_merge.resize(particles->size());
-    _buffer_remove.resize(particles->size());
+      extract_split_particles_kernel<<<grid, block>>>(
+          split_particles.addr(), new_masses.addr(), new_positions.addr(),
+          new_velocities.addr(), host_split_count);
 
+      CUDA_CALL(cudaDeviceSynchronize());
+      CHECK_KERNEL();
+
+      // Add new particles
+      particles->add_elements(new_masses, new_positions, new_velocities,
+                              host_split_count);
+
+      // Append zeros to buffers
+      _buffer_remove.append(new_remove);
+      _buffer_merge_count.append(new_merge_count);
+      _buffer_merge.append(new_merge);
+
+      // Verify sizes match
+      if (_buffer_remove.length() != particles->size() ||
+          _buffer_merge_count.length() != particles->size() ||
+          _buffer_merge.length() != particles->size()) {
+        throw std::runtime_error(
+            "Buffer sizes don't match particle count after split");
+      }
+    }
     // change in mass
 
     // Print total mass after
@@ -1033,17 +1153,23 @@ __global__ void update_upsampled_cuda(
     float3 *vel_granular, float3 *vel_upsampled, const int n,
     int *cell_start_upsampled, int *cell_start_granular,
     int *cell_start_boundary, const int3 cell_size, const float cell_length) {
+
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= n)
     return;
 
   const float3 pos_i = pos_upsampled[i];
   float3 weighted_vel = make_float3(0.0f, 0.0f, 0.0f);
-  float total_weight = 0.0f;
+  float granular_weight = 0.0f;
+  float boundary_weight = 0.0f;
   float max_w_ij = 0.0f;
-  float alpha_i = 0.0f;
   const float3 g_t = make_float3(0.0f, -9.8f, 0.0f);
   const float d_t = 0.002f;
+
+  // Boundary repulsion parameters
+  const float boundary_radius = 0.015f;
+  const float repulsion_strength = 5.0f;
+  float3 boundary_repulsion = make_float3(0.0f, 0.0f, 0.0f);
 
 #pragma unroll
   for (auto m = 0; m < 27; __syncthreads(), ++m) {
@@ -1055,75 +1181,69 @@ __global__ void update_upsampled_cuda(
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
       continue;
 
+    // Handle granular particles
     int j = cell_start_granular[cellID];
     while (j < cell_start_granular[cellID + 1]) {
       const float dis = length(pos_i - pos_granular[j]);
       const float t_1 = 1 - (dis * dis * r_9);
 
       const float w_ij = max(0.0f, t_1 * t_1 * t_1);
-      total_weight += w_ij;
-
+      granular_weight += w_ij;
       weighted_vel += w_ij * vel_granular[j];
-
-      if (w_ij > max_w_ij) {
-        max_w_ij = w_ij;
-      }
+      max_w_ij = max(max_w_ij, w_ij);
       j++;
     }
 
+    // Handle boundary particles
     int k = cell_start_boundary[cellID];
     while (k < cell_start_boundary[cellID + 1]) {
-      const float dis = length(pos_i - pos_boundary[k]);
-      const float t_1 = 1 - (dis * dis * r_9);
+      const float3 to_boundary = pos_i - pos_boundary[k];
+      const float dis = length(to_boundary);
 
-      const float w_ij = max(0.0f, t_1 * t_1 * t_1);
-      total_weight += w_ij;
-
-      if (w_ij > max_w_ij) {
-        max_w_ij = w_ij;
+      // Add repulsion force when too close to boundary
+      if (dis < boundary_radius) {
+        float3 normal = to_boundary / (dis + 1e-6f);
+        float force =
+            repulsion_strength * (boundary_radius - dis) / boundary_radius;
+        boundary_repulsion += normal * force;
       }
-      // weighted_vel += w_ij * vel_granular[j];
+
+      // Calculate boundary influence
+      const float t_1 = 1 - (dis * dis * r_9);
+      const float w_ij = max(0.0f, t_1 * t_1 * t_1);
+      boundary_weight += w_ij;
+
       k++;
     }
   }
 
-  if (total_weight == 0.0f) {
-    vel_upsampled[i] = vel_upsampled[i] + g_t * d_t;
-    pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
-
-    pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
-    if (pos_upsampled[i].y < 0.005f) {
-      pos_upsampled[i].y = 0.005f;
-    }
-    if (pos_upsampled[i].x > 1.95) {
-      pos_upsampled[i].x = 1.95;
-    }
-    if (pos_upsampled[i].x < 0.05) {
-      pos_upsampled[i].x = 0.05;
-    }
-    if (pos_upsampled[i].z > 1.75) {
-      pos_upsampled[i].z = 1.75;
-    }
-    if (pos_upsampled[i].z < 0.05) {
-      pos_upsampled[i].z = 0.05;
-    }
-    return;
-  }
-
-  weighted_vel /= total_weight;
-  if (max_w_ij <= 0.6023319616f || max_w_ij / total_weight >= 0.6) {
-    alpha_i = 1 - max_w_ij;
+  // Update velocity and position
+  float3 new_vel;
+  if (granular_weight > 0.0f) {
+    // If there are nearby granular particles, use their influence
+    weighted_vel /= granular_weight;
+    float alpha = max(0.0f, 1.0f - max_w_ij);
+    new_vel =
+        alpha * (vel_upsampled[i] + g_t * d_t) + (1.0f - alpha) * weighted_vel;
   } else {
-    alpha_i = 0.0f;
+    // If no granular particles nearby, use current velocity with boundary
+    // repulsion
+    new_vel = vel_upsampled[i] + g_t * d_t;
   }
 
-  vel_upsampled[i] =
-      alpha_i * (vel_upsampled[i] + g_t * d_t) + (1 - alpha_i) * weighted_vel;
+  // Add boundary repulsion to velocity
+  new_vel += boundary_repulsion;
 
-  pos_upsampled[i] = pos_upsampled[i] + vel_upsampled[i] * d_t;
+  // Update velocity and position
+  vel_upsampled[i] = new_vel;
+  pos_upsampled[i] = pos_upsampled[i] + new_vel * d_t;
+
+  // Boundary constraints
   if (pos_upsampled[i].y < 0.005f) {
     pos_upsampled[i].y = 0.005f;
+    vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
   }
+
   if (pos_upsampled[i].x > 1.95) {
     pos_upsampled[i].x = 1.95;
   }
