@@ -86,5 +86,16 @@
     "shell": "system",
     "show_summary": true,
     "show_output": true
+  },
+  {
+    "label": "Debug with CUDA-GDB",
+    "command": "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build && cuda-gdb -ex 'set cuda api_failures stop' -ex 'set cuda api_failures stop_all' -ex 'set cuda kernel_errors stop' -ex 'set cuda launch_errors stop' -ex 'set cuda sync_errors stop' ./build/main",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never",
+    "shell": "system",
+    "show_summary": true,
+    "show_output": true
   }
 ]

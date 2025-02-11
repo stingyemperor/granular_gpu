@@ -28,7 +28,7 @@ GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &upsampled_particles,
     const float3 space_size, const float cell_length, const float dt,
     const float3 g, int3 cell_size, const float density,
-    const float upsampled_radius)
+    const float upsampled_radius, const bool is_move_boundary)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)),
       _upsampled(std::move(upsampled_particles)), _solver(_particles),
@@ -43,7 +43,8 @@ GranularSystem::GranularSystem(
       _density(density), _max_mass(4), _min_mass(1),
       _upsampled_radius(upsampled_radius), _buffer_boundary(_particles->size()),
       _buffer_cover_vector(_particles->size()),
-      _buffer_num_surface_neighbors(_particles->size()) {
+      _buffer_num_surface_neighbors(_particles->size()),
+      _is_move_boundary(is_move_boundary) {
   // initalize the boundary_particles
   neighbor_search_boundary(_boundaries, _cell_start_boundary);
   // Set the mass of all the particles to 1
@@ -392,7 +393,9 @@ float GranularSystem::step() {
   CUDA_CALL(cudaEventCreate(&start));
   CUDA_CALL(cudaEventCreate(&stop));
   CUDA_CALL(cudaEventRecord(start, 0));
-  neighbor_search_boundary(_boundaries, _cell_start_boundary);
+  if (_is_move_boundary) {
+    neighbor_search_boundary(_boundaries, _cell_start_boundary);
+  }
   neighbor_search_granular(_particles, _cell_start_particle);
   neighbor_search_upsampled(_upsampled, _cell_start_upsampled);
 

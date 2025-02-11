@@ -1,8 +1,8 @@
 {
   "space_size": {
-    "x": 10.0,
-    "y": 10.0,
-    "z": 10.0
+    "x": 2.0,
+    "y": 1.8,
+    "z": 1.8
   },
   "dt": 0.002,
   "gravity": {
@@ -20,16 +20,16 @@
     "y": 50,
     "z": 40
   },
-  "scene": 0,
+  "scene": 2,
   "boundary_translation": {
     "x": 0.0,
     "y": 0.0,
     "z": 0.0
   },
   "particle_translation": {
-    "x": 5.0,
-    "y": 0.1,
-    "z": 5.0
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
   },
-  "obj_file": ""
+  "obj_file": "obj/bucket.txt"
 }

@@ -5,6 +5,7 @@
 #include "VBO.hpp"
 #include "helper_math.h"
 #include <GL/freeglut.h>
+#include <cerrno>
 #include <cuda_gl_interop.h>
 #include <cuda_runtime.h>
 #include <filesystem>
@@ -22,6 +23,7 @@ float pick_radius = 0.03f; // Radius of picking sphere
 DArray<int> picked_particles(1);
 int num_picked = 0; // Keep track of number of picked particles
 float3 last_pick_pos = make_float3(0.0f, 0.0f, 0.0f);
+std::string obj_file;
 
 using json = nlohmann::json;
 // vbo and GL variables
@@ -82,6 +84,7 @@ struct SceneConfig {
   float3 boundary_translation;
   float3 particle_translation;
   int scene;
+  std::string obj_file;
 };
 
 struct AnimationState {
@@ -99,7 +102,7 @@ struct AnimationState {
 };
 
 AnimationState animation_state;
-enum Scene { PILING = 0, BOX = 1 };
+enum Scene { PILING = 0, BOX = 1, EXCAVATOR = 2, FUNNEL = 3 };
 
 SceneConfig loadSceneConfig(const std::string &config_file) {
   SceneConfig config;
@@ -142,6 +145,8 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
   config.cell_size = make_int3(ceil(config.space_size.x / config.cell_length),
                                ceil(config.space_size.y / config.cell_length),
                                ceil(config.space_size.z / config.cell_length));
+
+  config.obj_file = j["obj_file"];
 
   return config;
 }
@@ -285,6 +290,10 @@ void init_granular_system() {
   const auto compact_size = 2 * make_int3(ceil(space_size.x / cell_length),
                                           ceil(space_size.y / cell_length),
                                           ceil(space_size.z / cell_length));
+
+  auto boundary_particles = std::make_shared<GranularParticles>(pos);
+  bool is_move = false;
+
   if (scene == Scene::PILING) {
 
     // top and bottom
@@ -298,6 +307,12 @@ void init_granular_system() {
         pos.push_back(0.99f * x + 0.005f * space_size);
       }
     }
+
+    for (auto &p : pos) {
+      p += boundary_translation;
+    }
+
+    boundary_particles = std::make_shared<GranularParticles>(pos);
 
   } else if (scene == Scene::BOX) {
     // front and back
@@ -333,67 +348,113 @@ void init_granular_system() {
         pos.push_back(0.99f * x + 0.005f * space_size);
       }
     }
-  }
-  std::cout << "Boundary translation : " << boundary_translation.x << " "
-            << boundary_translation.y << " " << boundary_translation.z
-            << std::endl;
-  for (auto &p : pos) {
-    p += boundary_translation;
-  }
 
-  // Read additional boundary particles from file if specified
-  int start_index = pos.size(); // Store the starting index
-
-  try {
-    if (std::filesystem::exists("obj/bucket.txt")) {
-      int file_start_index =
-          pos.size(); // Store current size before adding new particles
-      std::vector<float3> additional_particles =
-          readBoundaryParticlesFromFile("obj/bucket.txt", file_start_index);
-
-      // Create temporary vector to mark animated particles
-      std::vector<int> animated_markers(
-          pos.size(), 0); // Initialize existing particles as not animated
-      std::vector<int> new_animated(additional_particles.size(),
-                                    1); // Mark new particles as animated
-      animated_markers.insert(animated_markers.end(), new_animated.begin(),
-                              new_animated.end());
-
-      // Store animation state
-      animation_state.start_index = file_start_index;
-      animation_state.num_particles = additional_particles.size();
-      animation_state.is_animating = true;
-      animation_state.animation_time = 0.0f;
-
-      // Calculate rotation center
-      float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
-      for (const auto &p : additional_particles) {
-        centroid += p;
-      }
-      animation_state.rotation_center =
-          centroid / (float)additional_particles.size();
-
-      // Append particles
-      pos.insert(pos.end(), additional_particles.begin(),
-                 additional_particles.end());
-
-      // Create boundary particles with the animated markers
-      auto boundary_particles = std::make_shared<GranularParticles>(pos);
-
-      // Copy animated markers to device
-      CUDA_CALL(cudaMemcpy(
-          boundary_particles->get_is_animated_ptr(), animated_markers.data(),
-          animated_markers.size() * sizeof(int), cudaMemcpyHostToDevice));
+    for (auto &p : pos) {
+      p += boundary_translation;
     }
-  } catch (const std::exception &e) {
-    std::cerr << "Error reading boundary particles: " << e.what() << std::endl;
-  }
 
-  auto boundary_particles = std::make_shared<GranularParticles>(pos);
+    boundary_particles = std::make_shared<GranularParticles>(pos);
+  } else if (scene == Scene::EXCAVATOR) {
+
+    // add the box
+    // front and back
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.y; ++j) {
+        auto x = make_float3(i, j, 0) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, j, compact_size.z - 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // top and bottom
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(i, 0, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, compact_size.y - 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // left and right
+    for (auto i = 0; i < compact_size.y - 2; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(0, i + 1, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(compact_size.x - 1, i + 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+
+    // add the bucket
+    //  Read additional boundary particles from file if specified
+    int start_index = pos.size(); // Store the starting index
+
+    int base_boundary_count = pos.size();
+    std::vector<int> animated_markers(base_boundary_count, 0);
+
+    try {
+      if (std::filesystem::exists(obj_file)) {
+        std::vector<float3> additional_particles =
+            readBoundaryParticlesFromFile(obj_file,
+                                          animation_state.start_index);
+
+        // Store animation state
+        animation_state.start_index = base_boundary_count;
+        animation_state.num_particles = additional_particles.size();
+        animation_state.is_animating = true;
+        animation_state.animation_time = 0.0f;
+
+        // Calculate rotation center
+        float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+        for (const auto &p : additional_particles) {
+          centroid += p;
+        }
+        animation_state.rotation_center =
+            centroid / (float)additional_particles.size();
+
+        // Mark new particles as animated
+        std::vector<int> new_animated(additional_particles.size(), 1);
+        animated_markers.insert(animated_markers.end(), new_animated.begin(),
+                                new_animated.end());
+
+        for (auto &p : additional_particles) {
+          p += make_float3(2.5f, 0.0f, 0.5f);
+        }
+
+        // Append new particles
+        pos.insert(pos.end(), additional_particles.begin(),
+                   additional_particles.end());
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "Error reading boundary particles: " << e.what()
+                << std::endl;
+    }
+
+    boundary_particles = std::make_shared<GranularParticles>(pos);
+    // Copy animation markers to device
+    CUDA_CALL(cudaMemcpy(
+        boundary_particles->get_is_animated_ptr(), animated_markers.data(),
+        animated_markers.size() * sizeof(int), cudaMemcpyHostToDevice));
+
+    // Print some debug information
+    std::cout << "Total boundary particles: " << pos.size() << std::endl;
+    std::cout << "Animated particles: " << animation_state.num_particles
+              << std::endl;
+    std::cout << "Start index: " << animation_state.start_index << std::endl;
+
+    is_move = true;
+  }
 
   p_system = std::make_shared<GranularSystem>(
       granular_particles, boundary_particles, upsampled_particles, space_size,
-      cell_length, dt, G, cell_size, density, upsampled_particle_radius);
+      cell_length, dt, G, cell_size, density, upsampled_particle_radius,
+      is_move);
 }
 
 __global__ void animateParticles(float3 *positions, int *is_animated,
@@ -448,7 +509,7 @@ void updateAnimation(float dt) {
                   animation_state.translation_speed * dt;
   } else if (!animation_state.translation_complete) {
     animation_state.translation_complete = true;
-    animation_state.animation_time = 0.0f; // Reset timer for rotation
+    animation_state.animation_time = 0.0f;
   }
 
   // After translation: rotation
@@ -459,7 +520,7 @@ void updateAnimation(float dt) {
     rotation = rotation_delta;
 
     if (animation_state.rotation_angle >= 90.0f) {
-      animation_state.is_animating = false; // Stop animation
+      animation_state.is_animating = false;
     }
   }
 
@@ -1068,7 +1129,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig("scenes/excavator.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
@@ -1087,6 +1148,7 @@ int main(int argc, char *argv[]) {
     boundary_translation = config.boundary_translation;
     particle_translation = config.particle_translation;
     scene = config.scene;
+    obj_file = config.obj_file;
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_MULTISAMPLE);
