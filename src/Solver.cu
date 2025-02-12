@@ -1168,7 +1168,7 @@ __global__ void update_upsampled_cuda(
   const float d_t = 0.002f;
 
   // Boundary repulsion parameters
-  const float boundary_radius = 0.015f;
+  const float boundary_radius = 0.02f;
   const float repulsion_strength = 5.0f;
   float3 boundary_repulsion = make_float3(0.0f, 0.0f, 0.0f);
 
@@ -1229,7 +1229,7 @@ __global__ void update_upsampled_cuda(
   } else {
     // If no granular particles nearby, use current velocity with boundary
     // repulsion
-    new_vel = vel_upsampled[i] + g_t * d_t;
+    new_vel = vel_upsampled[i] * 0.9f + g_t * d_t;
   }
 
   // Add boundary repulsion to velocity
@@ -1245,18 +1245,18 @@ __global__ void update_upsampled_cuda(
     vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
   }
 
-  if (pos_upsampled[i].x > 1.95) {
-    pos_upsampled[i].x = 1.95;
-  }
-  if (pos_upsampled[i].x < 0.05) {
-    pos_upsampled[i].x = 0.05;
-  }
-  if (pos_upsampled[i].z > 1.75) {
-    pos_upsampled[i].z = 1.75;
-  }
-  if (pos_upsampled[i].z < 0.05) {
-    pos_upsampled[i].z = 0.05;
-  }
+  // if (pos_upsampled[i].x > 1.95) {
+  //   pos_upsampled[i].x = 1.95;
+  // }
+  // if (pos_upsampled[i].x < 0.05) {
+  //   pos_upsampled[i].x = 0.05;
+  // }
+  // if (pos_upsampled[i].z > 1.75) {
+  //   pos_upsampled[i].z = 1.75;
+  // }
+  // if (pos_upsampled[i].z < 0.05) {
+  //   pos_upsampled[i].z = 0.05;
+  // }
 
   return;
 }

@@ -24,6 +24,7 @@ DArray<int> picked_particles(1);
 int num_picked = 0; // Keep track of number of picked particles
 float3 last_pick_pos = make_float3(0.0f, 0.0f, 0.0f);
 std::string obj_file;
+std::vector<float3> stored_additional_particles;
 
 using json = nlohmann::json;
 // vbo and GL variables
@@ -171,6 +172,45 @@ std::vector<float3> readBoundaryParticlesFromFile(const std::string &filename,
 
   file.close();
   return positions;
+}
+
+void saveAdditionalBoundaryParticlesToVTK(
+    const std::shared_ptr<GranularParticles> &boundary_particles,
+    const std::vector<float3> &original_additional_particles,
+    const std::string &filename) {
+  std::ofstream outFile(filename);
+
+  if (!outFile.is_open()) {
+    std::cerr << "Failed to open file: " << filename << std::endl;
+    return;
+  }
+
+  // Write VTK header
+  outFile << "# vtk DataFile Version 3.0\n";
+  outFile << "Additional Boundary Particles\n";
+  outFile << "ASCII\n";
+  outFile << "DATASET UNSTRUCTURED_GRID\n";
+
+  // Write points
+  outFile << "POINTS " << original_additional_particles.size() << " float\n";
+  for (const auto &pos : original_additional_particles) {
+    outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+  }
+
+  // Write cells (each particle is a vertex cell)
+  outFile << "CELLS " << original_additional_particles.size() << " "
+          << original_additional_particles.size() * 2 << "\n";
+  for (size_t i = 0; i < original_additional_particles.size(); i++) {
+    outFile << "1 " << i << "\n";
+  }
+
+  // Write cell types (VTK_VERTEX = 1)
+  outFile << "CELL_TYPES " << original_additional_particles.size() << "\n";
+  for (size_t i = 0; i < original_additional_particles.size(); i++) {
+    outFile << "1\n";
+  }
+
+  outFile.close();
 }
 
 void saveUpsampledPositionsToVTK(
@@ -488,11 +528,18 @@ void init_granular_system() {
     //   p += boundary_translation;
     // }
 
+    int base_boundary_count = pos.size();
+    std::vector<int> animated_markers(base_boundary_count, 0);
     try {
       if (std::filesystem::exists(obj_file)) {
         std::vector<float3> additional_particles =
             readBoundaryParticlesFromFile(obj_file,
                                           animation_state.start_index);
+
+        animation_state.start_index = base_boundary_count;
+        animation_state.num_particles = additional_particles.size();
+        animation_state.is_animating = false;
+        animation_state.animation_time = 0.0f;
 
         // Calculate rotation center
         float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
@@ -507,6 +554,10 @@ void init_granular_system() {
         const float cos_theta = cosf(angle);
         const float sin_theta = sinf(angle);
 
+        std::vector<int> new_animated(additional_particles.size(), 1);
+        animated_markers.insert(animated_markers.end(), new_animated.begin(),
+                                new_animated.end());
+
         for (auto &p : additional_particles) {
           // Translate to origin
           float3 centered = p - centroid;
@@ -517,13 +568,17 @@ void init_granular_system() {
           // z' = y*sin(θ) + z*cos(θ)
           // x' = x
           float new_y = centered.y * cos_theta - centered.z * sin_theta;
+
           float new_z = centered.y * sin_theta + centered.z * cos_theta;
+
+          // Store animation state
 
           // Translate back and apply any additional translation
           p = make_float3(centered.x, new_y, new_z) + centroid +
-              make_float3(1.25f, 0.5f, 1.0f);
+              make_float3(1.25f, 0.3f, 1.0f);
         }
 
+        stored_additional_particles = additional_particles;
         // Append rotated particles
         pos.insert(pos.end(), additional_particles.begin(),
                    additional_particles.end());
@@ -534,6 +589,10 @@ void init_granular_system() {
     }
 
     boundary_particles = std::make_shared<GranularParticles>(pos);
+
+    CUDA_CALL(cudaMemcpy(
+        boundary_particles->get_is_animated_ptr(), animated_markers.data(),
+        animated_markers.size() * sizeof(int), cudaMemcpyHostToDevice));
   }
 
   p_system = std::make_shared<GranularSystem>(
@@ -1020,6 +1079,15 @@ void renderBoundaryCorners() {
 
 void one_step() {
   // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+
+  if (!stored_additional_particles.empty()) {
+    std::filesystem::create_directory("additional_boundary_data");
+    std::string boundary_filename =
+        "additional_boundary_data/boundary_" + std::to_string(frameId) + ".vtk";
+    saveAdditionalBoundaryParticlesToVTK(p_system->get_boundaries(),
+                                         stored_additional_particles,
+                                         boundary_filename);
+  }
   ++frameId;
   p_system->step();
   // TODO fix
