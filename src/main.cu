@@ -451,27 +451,45 @@ void init_granular_system() {
     is_move = true;
 
   } else if (scene == Scene::FUNNEL) {
-    int base_boundary_count = pos.size();
-    std::vector<int> animated_markers(base_boundary_count, 0);
 
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.y; ++j) {
+        auto x = make_float3(i, j, 0) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, j, compact_size.z - 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
     // top and bottom
     for (auto i = 0; i < compact_size.x; ++i) {
       for (auto j = 0; j < compact_size.z - 2; ++j) {
         auto x = make_float3(i, 0, j + 1) /
                  make_float3(compact_size - make_int3(1)) * space_size;
         pos.push_back(0.99f * x + 0.005f * space_size);
-        x = make_float3(i, compact_size.y - 1, j + 1) /
+        // x = make_float3(i, compact_size.y - 1, j + 1) /
+        //     make_float3(compact_size - make_int3(1)) * space_size;
+        // pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // left and right
+    for (auto i = 0; i < compact_size.y - 2; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(0, i + 1, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(compact_size.x - 1, i + 1, j + 1) /
             make_float3(compact_size - make_int3(1)) * space_size;
         pos.push_back(0.99f * x + 0.005f * space_size);
       }
     }
+    // for (auto &p : pos) {
+    //   p += boundary_translation;
+    // }
 
-    for (auto &p : pos) {
-      p += boundary_translation;
-    }
     try {
       if (std::filesystem::exists(obj_file)) {
-
         std::vector<float3> additional_particles =
             readBoundaryParticlesFromFile(obj_file,
                                           animation_state.start_index);
@@ -481,21 +499,32 @@ void init_granular_system() {
         for (const auto &p : additional_particles) {
           centroid += p;
         }
-        animation_state.rotation_center =
-            centroid / (float)additional_particles.size();
+        centroid = centroid / (float)additional_particles.size();
 
-        // translate the boudnary particles
+        // Apply 90-degree rotation around x-axis for each particle
+        const float angle =
+            90.0f * M_PI / 180.0f; // Convert 90 degrees to radians
+        const float cos_theta = cosf(angle);
+        const float sin_theta = sinf(angle);
+
         for (auto &p : additional_particles) {
-          p += make_float3(2.5f, 0.0f, 0.5f);
+          // Translate to origin
+          float3 centered = p - centroid;
 
-          float angle = 270.0f * (M_PI / 180.0f);
-          float x = p.x;
-          float y = p.z;
-          p.x = x * cos(angle) - y * sin(angle);
-          p.y = x * sin(angle) + y * cos(angle);
+          // Rotate around x-axis
+          // For x-axis rotation:
+          // y' = y*cos(θ) - z*sin(θ)
+          // z' = y*sin(θ) + z*cos(θ)
+          // x' = x
+          float new_y = centered.y * cos_theta - centered.z * sin_theta;
+          float new_z = centered.y * sin_theta + centered.z * cos_theta;
+
+          // Translate back and apply any additional translation
+          p = make_float3(centered.x, new_y, new_z) + centroid +
+              make_float3(1.25f, 0.5f, 1.0f);
         }
 
-        // Append new particles
+        // Append rotated particles
         pos.insert(pos.end(), additional_particles.begin(),
                    additional_particles.end());
       }
@@ -1110,9 +1139,9 @@ static void displayFunc(void) {
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
-  // renderUpsampledParticles();
+  renderUpsampledParticles();
 
-  // renderBoundaryCorners();
+  renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -1185,7 +1214,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig("scenes/funnel.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

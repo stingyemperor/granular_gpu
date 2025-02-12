@@ -896,13 +896,13 @@ void Solver::adaptive_sampling(
                          cudaMemcpyHostToDevice));
     // TODO: fix the split kernel
     // Run split kernel
-    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), boundaries->get_pos_ptr(),
-        particles->get_surface_ptr(), _buffer_remove.addr(),
-        _buffer_merge.addr(), cell_start_granular.addr(),
-        cell_start_boundary.addr(), max_mass, cell_size, split_particles.addr(),
-        d_split_count, density, cell_length);
+    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+    //     particles->get_vel_ptr(), boundaries->get_pos_ptr(),
+    //     particles->get_surface_ptr(), _buffer_remove.addr(),
+    //     _buffer_merge.addr(), cell_start_granular.addr(),
+    //     cell_start_boundary.addr(), max_mass, cell_size,
+    //     split_particles.addr(), d_split_count, density, cell_length);
 
     // // Print final state before removal
     // std::cout << "\nFinal state before removal:\n";
@@ -1071,64 +1071,65 @@ void Solver::adaptive_sampling(
 
     // Get number of splits
     // TODO : check order of split
-    CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
-                         cudaMemcpyDeviceToHost));
-    CUDA_CALL(cudaFree(d_split_count));
+    // CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
+    //                      cudaMemcpyDeviceToHost));
+    // CUDA_CALL(cudaFree(d_split_count));
 
-    if (host_split_count > 0) {
-      // Prepare arrays for new particles
-      DArray<float> new_masses(host_split_count);
-      DArray<float3> new_positions(host_split_count);
-      DArray<float3> new_velocities(host_split_count);
+    // if (host_split_count > 0) {
+    //   // Prepare arrays for new particles
+    //   DArray<float> new_masses(host_split_count);
+    //   DArray<float3> new_positions(host_split_count);
+    //   DArray<float3> new_velocities(host_split_count);
 
-      // Create zero-filled arrays for buffers
-      DArray<int> new_remove(host_split_count);
-      DArray<int> new_merge_count(host_split_count);
-      DArray<float> new_merge(host_split_count);
+    //   // Create zero-filled arrays for buffers
+    //   DArray<int> new_remove(host_split_count);
+    //   DArray<int> new_merge_count(host_split_count);
+    //   DArray<float> new_merge(host_split_count);
 
-      // Fill new arrays with zeros
-      thrust::fill(
-          thrust::device, thrust::device_pointer_cast(new_remove.addr()),
-          thrust::device_pointer_cast(new_remove.addr() + host_split_count), 0);
-      thrust::fill(thrust::device,
-                   thrust::device_pointer_cast(new_merge_count.addr()),
-                   thrust::device_pointer_cast(new_merge_count.addr() +
-                                               host_split_count),
-                   0);
-      thrust::fill(
-          thrust::device, thrust::device_pointer_cast(new_merge.addr()),
-          thrust::device_pointer_cast(new_merge.addr() + host_split_count),
-          0.0f);
+    //   // Fill new arrays with zeros
+    //   thrust::fill(
+    //       thrust::device, thrust::device_pointer_cast(new_remove.addr()),
+    //       thrust::device_pointer_cast(new_remove.addr() + host_split_count),
+    //       0);
+    //   thrust::fill(thrust::device,
+    //                thrust::device_pointer_cast(new_merge_count.addr()),
+    //                thrust::device_pointer_cast(new_merge_count.addr() +
+    //                                            host_split_count),
+    //                0);
+    //   thrust::fill(
+    //       thrust::device, thrust::device_pointer_cast(new_merge.addr()),
+    //       thrust::device_pointer_cast(new_merge.addr() + host_split_count),
+    //       0.0f);
 
-      // Extract split particles
+    //   // Extract split particles
 
-      dim3 block(256);
-      dim3 grid((host_split_count + block.x - 1) / block.x);
+    //   dim3 block(256);
+    //   dim3 grid((host_split_count + block.x - 1) / block.x);
 
-      extract_split_particles_kernel<<<grid, block>>>(
-          split_particles.addr(), new_masses.addr(), new_positions.addr(),
-          new_velocities.addr(), host_split_count);
+    //   extract_split_particles_kernel<<<grid, block>>>(
+    //       split_particles.addr(), new_masses.addr(), new_positions.addr(),
+    //       new_velocities.addr(), host_split_count);
 
-      CUDA_CALL(cudaDeviceSynchronize());
-      CHECK_KERNEL();
+    //   CUDA_CALL(cudaDeviceSynchronize());
+    //   CHECK_KERNEL();
 
-      // Add new particles
-      particles->add_elements(new_masses, new_positions, new_velocities,
-                              host_split_count);
+    //   // Add new particles
+    //   particles->add_elements(new_masses, new_positions, new_velocities,
+    //                           host_split_count);
 
-      // Append zeros to buffers
-      _buffer_remove.append(new_remove);
-      _buffer_merge_count.append(new_merge_count);
-      _buffer_merge.append(new_merge);
+    //   // Append zeros to buffers
+    //   _buffer_remove.append(new_remove);
+    //   _buffer_merge_count.append(new_merge_count);
+    //   _buffer_merge.append(new_merge);
 
-      // Verify sizes match
-      if (_buffer_remove.length() != particles->size() ||
-          _buffer_merge_count.length() != particles->size() ||
-          _buffer_merge.length() != particles->size()) {
-        throw std::runtime_error(
-            "Buffer sizes don't match particle count after split");
-      }
-    }
+    //   // Verify sizes match
+    //   if (_buffer_remove.length() != particles->size() ||
+    //       _buffer_merge_count.length() != particles->size() ||
+    //       _buffer_merge.length() != particles->size()) {
+    //     throw std::runtime_error(
+    //         "Buffer sizes don't match particle count after split");
+    //   }
+    // }
     // change in mass
 
     // Print total mass after
