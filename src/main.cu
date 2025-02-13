@@ -53,7 +53,7 @@ static float zoom = 0.3f;
 static int frameId = 0;
 static float totalTime = 0.0f;
 bool running = false;
-bool show_surface = true;
+int show_surface = 2;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
@@ -315,7 +315,7 @@ void init_granular_system() {
                                                      particle_radius);
 
   for (const auto &particle : pos) {
-    for (int n = 0; n < 12; ++n) {
+    for (int n = 0; n < 15; ++n) {
       float3 offset =
           make_float3(distribution(generator), distribution(generator),
                       distribution(generator));
@@ -901,7 +901,7 @@ void motionFunc(const int x, const int y) {
 extern "C" void
 generate_dots(float3 *dot, float3 *color,
               const std::shared_ptr<GranularParticles> particles, int *surface,
-              const float max_mass, const float min_mass, bool show_surface);
+              const float max_mass, const float min_mass, int show_surface);
 
 void renderParticles(void) {
   size_t current_particle_count = p_system->size();
@@ -1207,9 +1207,9 @@ static void displayFunc(void) {
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
-  renderUpsampledParticles();
+  // renderUpsampledParticles();
 
-  renderBoundaryCorners();
+  // renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -1255,7 +1255,7 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
   case 'E': {
     // Trigger explosion with force of 50.0f (adjust this value as needed)
     auto particles = p_system->get_particles_non_const();
-    p_system->get_solver().trigger_explosion(particles, 20.0f);
+    p_system->get_solver().trigger_explosion(particles, 50.0f);
     break;
   }
   default:
@@ -1282,7 +1282,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/funnel.json");
+      config = loadSceneConfig("scenes/excavator.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

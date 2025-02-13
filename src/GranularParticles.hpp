@@ -7,7 +7,7 @@ public:
   explicit GranularParticles(const std::vector<float3> &p)
       : Particles(p), _mass(p.size()), _scaled_mass(p.size()),
         _surface(p.size()), _particle_2_cell(p.size()), _num_surface(p.size()),
-        _is_animated(p.size()) {
+        _is_animated(p.size()), _surface_distance(p.size()) {
     CUDA_CALL(cudaMemcpy(_pos.addr(), &p[0], sizeof(float3) * p.size(),
                          cudaMemcpyHostToDevice));
   }
@@ -20,6 +20,7 @@ public:
   float *get_mass_ptr() const { return _mass.addr(); }
   float *get_scaled_mass_ptr() const { return _scaled_mass.addr(); }
   int *get_surface_ptr() const { return _surface.addr(); }
+  float *get_surface_distance_ptr() const { return _surface_distance.addr(); }
   int *get_num_surface_ptr() const { return _num_surface.addr(); }
 
   const DArray<float> &get_mass() const { return _mass; }
@@ -32,7 +33,7 @@ public:
     }
 
     try {
-      _surface.compact(removal_flags);
+      // _surface.compact(removal_flags);
     } catch (std::exception &e) {
       std::cerr << "Mismatch in surface: " << e.what() << std::endl;
     }
@@ -59,14 +60,14 @@ public:
     // Resize all arrays if needed
     if (new_size > _mass.capacity()) {
       _mass.resize(new_size);
-      _surface.resize(new_size);
+      // _surface.resize(new_size);
       _particle_2_cell.resize(new_size);
     }
 
     // Resize only the arrays we're actually using
     if (new_size > _mass.capacity()) {
       _mass.resize(new_size);
-      _surface.resize(new_size);
+      // _surface.resize(new_size);
       _particle_2_cell.resize(new_size);
     }
 
@@ -86,7 +87,7 @@ public:
         thrust::device_pointer_cast(new_particle_2_cell.addr() + num), 0);
 
     // Append the temporary arrays
-    _surface.append(new_surface);
+    // _surface.append(new_surface);
     _particle_2_cell.append(new_particle_2_cell);
 
     // Call parent class add_elements
@@ -94,7 +95,7 @@ public:
 
     // Verify sizes
     const unsigned int final_size = size();
-    if (_mass.length() != final_size || _surface.length() != final_size ||
+    if (_mass.length() != final_size ||
         _particle_2_cell.length() != final_size) {
       throw std::runtime_error("Array size mismatch after adding elements");
     }
@@ -108,6 +109,7 @@ protected:
   DArray<float> _mass;
   DArray<float> _scaled_mass;
   DArray<int> _surface;
+  DArray<float> _surface_distance;
   DArray<int> _num_surface;
   DArray<int> _particle_2_cell; // lookup key
   DArray<int> _is_animated;     // 1 if particle should be animated, 0 otherwise

@@ -18,8 +18,13 @@
 #define SMOOTHING_LENGTH 0.04f
 #define PI_3 1.047197551f
 #define PI_2 1.570796327f
+#define PI_2_2 0.7853981634
 #define PI_3_2 0.5235987756
 #define PI_3_4 0.2617993878
+#define NEIGHBOR_THRESHOLD 13
+#define MAX_NEIGHBORS 100
+#define FLT_MAX 100000.0f
+
 __device__ __constant__ double PI_d = 3.14159265358979323846;
 
 GranularSystem::GranularSystem(
@@ -416,6 +421,10 @@ float GranularSystem::step() {
 
     cudaDeviceSynchronize();
 
+    find_distance_to_surface(_particles, _cell_start_particle);
+
+    cudaDeviceSynchronize();
+
     _solver.adaptive_sampling(_particles, _boundaries, _cell_start_particle,
                               _cell_start_boundary, _max_mass, _cell_size,
                               _space_size, _cell_length, _density);
@@ -584,7 +593,7 @@ __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
 
       b = normalize(b);
 
-      if (abs(acos(dot(b, c_v))) <= PI_3) {
+      if (acos(dot(b, c_v)) <= PI_3) {
         boundary_vote = true;
       }
       n_neighbors++;
@@ -632,4 +641,66 @@ void GranularSystem::set_surface_particles(
   CUDA_CALL(cudaMemcpy(
       particles->get_num_surface_ptr(), _buffer_num_surface_neighbors.addr(),
       sizeof(int) * particles->size(), cudaMemcpyDeviceToDevice));
+}
+
+__global__ void
+compute_distance_to_surface(const int num, const float3 *pos_particles,
+                            const int *is_surface, const int *cell_start,
+                            const int3 cell_size, const float cell_length,
+                            float *min_distance2) {
+  const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+  if (i >= num)
+    return;
+  __syncthreads();
+
+  if (is_surface[i] == 1) {
+    min_distance2[i] = 0.0f;
+    return;
+  }
+
+  float best_dist2 = FLT_MAX;
+
+  // Loop through 27 neighboring cells using the same pattern as other functions
+  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+    const auto cellID = particlePos2cellIdx(
+        make_int3(pos_particles[i] / cell_length) +
+            make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
+        cell_size);
+
+    if (cellID == (cell_size.x * cell_size.y * cell_size.z))
+      continue;
+
+    // Get particles in this cell
+    int j = cell_start[cellID];
+    while (j < cell_start[cellID + 1]) {
+      if (i == j) {
+        j++;
+        continue;
+      }
+
+      // Only consider surface particles
+      if (is_surface[j] != 0) {
+        float3 diff = pos_particles[i] - pos_particles[j];
+        float dist2 = dot(diff, diff); // Using dot product from helper_math.h
+
+        if (dist2 < best_dist2) {
+          best_dist2 = dist2;
+        }
+      }
+      j++;
+    }
+  }
+
+  min_distance2[i] = best_dist2;
+}
+
+void GranularSystem::find_distance_to_surface(
+    const std::shared_ptr<GranularParticles> &particles,
+    DArray<int> &cell_start) {
+
+  const int num = particles->size();
+  compute_distance_to_surface<<<(num - 1) / block_size + 1, block_size>>>(
+      num, particles->get_pos_ptr(), particles->get_surface_ptr(),
+      _cell_start_particle.addr(), _cell_size, _cell_length,
+      particles->get_surface_distance_ptr());
 }

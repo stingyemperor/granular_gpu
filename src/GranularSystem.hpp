@@ -99,4 +99,7 @@ private:
   void
   set_surface_particles(const std::shared_ptr<GranularParticles> &particles,
                         DArray<int> &cell_start);
+  void
+  find_distance_to_surface(const std::shared_ptr<GranularParticles> &particles,
+                           DArray<int> &cell_start);
 };

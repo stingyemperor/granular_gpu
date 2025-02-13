@@ -30,6 +30,7 @@ __device__ __constant__ float r_9_b = 1111.1111111;
 #define EPSILON_m 1e-4f // Small threshold for comparison
 
 int t_merge_iter = 0;
+int t_iter_iter = 0;
 
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
@@ -316,9 +317,9 @@ __device__ void particles_constraint(float3 &del_p, int &n, int i,
             norm3df(del_p_ij_perp.x, del_p_ij_perp.y, del_p_ij_perp.z);
 
         const float min_fric =
-            min((r_i + r_j) * 0.5 / del_p_ij_perp_norm, 1.0f);
+            min((r_i + r_j) * 0.8 / del_p_ij_perp_norm, 1.0f);
 
-        if (del_p_ij_perp_norm < (r_i + r_j) * 0.5) {
+        if (del_p_ij_perp_norm < (r_i + r_j) * 0.8) {
           del_p -= inv_m_sum * inv_m_i * del_p_ij;
           delta_pos[j] += inv_m_sum * inv_m_i * del_p_ij;
         } else {
@@ -491,11 +492,11 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
 
 __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
                                float *mass_granular, float3 *vel_granular,
-                               int *surface, int *num_surface_neighbors,
-                               int *remove, float *merge,
-                               float3 *merge_velocity, int *cell_start_granular,
-                               float max_mass, const int3 cell_size,
-                               const float cell_length) {
+                               int *surface, float *surface_distance,
+                               int *num_surface_neighbors, int *remove,
+                               float *merge, float3 *merge_velocity,
+                               int *cell_start_granular, float max_mass,
+                               const int3 cell_size, const float cell_length) {
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
     return;
@@ -507,7 +508,7 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
 
   float mass_i = mass_granular[i];
   if (surface[i] != 0 || atomicOr(&remove[i], 0) != 0 || mass_i < 1.0f ||
-      mass_i >= max_mass) {
+      mass_i >= max_mass || surface_distance[i] < 100.0f) {
     return;
   }
 
@@ -531,7 +532,8 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
       // if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0 ||
       //     num_surface_neighbors[j] > 3) {
       //
-      if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0) {
+      if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0 ||
+          surface_distance[i] < 100.0f) {
         j++;
         continue;
       }
@@ -559,9 +561,11 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
 
   // Only proceed if we found a merge candidate
   if (closest_index != -1) {
-    if (atomicCAS(&remove[i], 0, -1) == 0 && surface[i] == 0) {
+    if (atomicCAS(&remove[i], 0, -1) == 0 && surface[i] == 0 &&
+        surface_distance[i] > 100.0f) {
       if (atomicCAS(&remove[closest_index], 0, -1) == 0 &&
-          surface[closest_index] == 0) {
+          surface[closest_index] == 0 &&
+          surface_distance[closest_index] > 100.0f) {
         atomicExch(&merge[closest_index], mass_i);
         atomicExch(&merge[i], -mass_i);
 
@@ -658,6 +662,8 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
       continue;
 
+    int j = cell_start_granular[cellID];
+
     // Check if cell is empty (but not the center cell)
     if (!found_empty && m != 13) { // m == 13 is the center cell
       if (cell_start_granular[cellID] == cell_start_granular[cellID + 1] &&
@@ -665,40 +671,43 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
         // Calculate cell center position
         int3 cell_pos = make_int3(pos / cell_length) +
                         make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1);
-        empty_cell_center = make_float3((cell_pos.x + 0.5f) * cell_length,
-                                        (cell_pos.y + 0.5f) * cell_length,
-                                        (cell_pos.z + 0.5f) * cell_length);
+        empty_cell_center = make_float3((cell_pos.x + 0.5f) * (cell_length),
+                                        (cell_pos.y + 0.5f) * (cell_length),
+                                        (cell_pos.z + 0.5f) * (cell_length));
+
+        // const float dis = length(pos - empty_cell_center);
+
         found_empty = true;
       }
     }
 
     // Count granular neighbors in this cell
-    int j = cell_start_granular[cellID];
-    while (j < cell_start_granular[cellID + 1]) {
-      const float3 pos_j = pos_granular[j];
-      const float dis = length(pos - pos_j);
-      if (dis > 0.0f && dis < max_dist) { // Exclude self
-        neighbor_count++;
-        if (neighbor_count >= 5) {
-          return false; // Too many neighbors
-        }
-      }
-      j++;
-    }
+    // int j = cell_start_granular[cellID];
+    // while (j < cell_start_granular[cellID + 1]) {
+    //   const float3 pos_j = pos_granular[j];
+    //   const float dis = length(pos - pos_j);
+    //   if (dis > 0.0f && dis < max_dist) { // Exclude self
+    //     neighbor_count++;
+    //     if (neighbor_count >= 5) {
+    //       return false; // Too many neighbors
+    //     }
+    //   }
+    //   j++;
+    // }
 
-    // Count boundary neighbors in this cell
-    j = cell_start_boundary[cellID];
-    while (j < cell_start_boundary[cellID + 1]) {
-      const float3 pos_j = pos_boundary[j];
-      const float dis = length(pos - pos_j);
-      if (dis < max_dist) {
-        neighbor_count++;
-        if (neighbor_count >= 2) {
-          return false; // Too many neighbors
-        }
-      }
-      j++;
-    }
+    // // Count boundary neighbors in this cell
+    // j = cell_start_boundary[cellID];
+    // while (j < cell_start_boundary[cellID + 1]) {
+    //   const float3 pos_j = pos_boundary[j];
+    //   const float dis = length(pos - pos_j);
+    //   if (dis < max_dist) {
+    //     neighbor_count++;
+    //     if (neighbor_count >= 2) {
+    //       return false; // Too many neighbors
+    //     }
+    //   }
+    //   j++;
+    // }
   }
 
   return found_empty; // Must have found an empty cell and have fewer than 5
@@ -720,7 +729,7 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
 
   // Check if particle is marked for removal or is a surface particle
   if (atomicOr(&remove[i], 0) != 0 || surface[i] != 1 ||
-      mass_granular[i] <= 3.0f) {
+      mass_granular[i] <= 2.0f) {
     return;
   }
 
@@ -832,6 +841,7 @@ void Solver::adaptive_sampling(
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),
+          particles->get_surface_distance_ptr(),
           particles->get_num_surface_ptr(), _buffer_remove.addr(),
           _buffer_merge.addr(), _buffer_merge_velocity.addr(),
           cell_start_granular.addr(), max_mass, cell_size, cell_length);
@@ -896,13 +906,13 @@ void Solver::adaptive_sampling(
                          cudaMemcpyHostToDevice));
     // TODO: fix the split kernel
     // Run split kernel
-    // split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-    //     num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-    //     particles->get_vel_ptr(), boundaries->get_pos_ptr(),
-    //     particles->get_surface_ptr(), _buffer_remove.addr(),
-    //     _buffer_merge.addr(), cell_start_granular.addr(),
-    //     cell_start_boundary.addr(), max_mass, cell_size,
-    //     split_particles.addr(), d_split_count, density, cell_length);
+    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+        particles->get_vel_ptr(), boundaries->get_pos_ptr(),
+        particles->get_surface_ptr(), _buffer_remove.addr(),
+        _buffer_merge.addr(), cell_start_granular.addr(),
+        cell_start_boundary.addr(), max_mass, cell_size, split_particles.addr(),
+        d_split_count, density, cell_length);
 
     // // Print final state before removal
     // std::cout << "\nFinal state before removal:\n";
@@ -1071,65 +1081,64 @@ void Solver::adaptive_sampling(
 
     // Get number of splits
     // TODO : check order of split
-    // CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
-    //                      cudaMemcpyDeviceToHost));
-    // CUDA_CALL(cudaFree(d_split_count));
+    CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
+                         cudaMemcpyDeviceToHost));
+    CUDA_CALL(cudaFree(d_split_count));
 
-    // if (host_split_count > 0) {
-    //   // Prepare arrays for new particles
-    //   DArray<float> new_masses(host_split_count);
-    //   DArray<float3> new_positions(host_split_count);
-    //   DArray<float3> new_velocities(host_split_count);
+    if (host_split_count > 0) {
+      // Prepare arrays for new particles
+      DArray<float> new_masses(host_split_count);
+      DArray<float3> new_positions(host_split_count);
+      DArray<float3> new_velocities(host_split_count);
 
-    //   // Create zero-filled arrays for buffers
-    //   DArray<int> new_remove(host_split_count);
-    //   DArray<int> new_merge_count(host_split_count);
-    //   DArray<float> new_merge(host_split_count);
+      // Create zero-filled arrays for buffers
+      DArray<int> new_remove(host_split_count);
+      DArray<int> new_merge_count(host_split_count);
+      DArray<float> new_merge(host_split_count);
 
-    //   // Fill new arrays with zeros
-    //   thrust::fill(
-    //       thrust::device, thrust::device_pointer_cast(new_remove.addr()),
-    //       thrust::device_pointer_cast(new_remove.addr() + host_split_count),
-    //       0);
-    //   thrust::fill(thrust::device,
-    //                thrust::device_pointer_cast(new_merge_count.addr()),
-    //                thrust::device_pointer_cast(new_merge_count.addr() +
-    //                                            host_split_count),
-    //                0);
-    //   thrust::fill(
-    //       thrust::device, thrust::device_pointer_cast(new_merge.addr()),
-    //       thrust::device_pointer_cast(new_merge.addr() + host_split_count),
-    //       0.0f);
+      // Fill new arrays with zeros
+      thrust::fill(
+          thrust::device, thrust::device_pointer_cast(new_remove.addr()),
+          thrust::device_pointer_cast(new_remove.addr() + host_split_count), 0);
+      thrust::fill(thrust::device,
+                   thrust::device_pointer_cast(new_merge_count.addr()),
+                   thrust::device_pointer_cast(new_merge_count.addr() +
+                                               host_split_count),
+                   0);
+      thrust::fill(
+          thrust::device, thrust::device_pointer_cast(new_merge.addr()),
+          thrust::device_pointer_cast(new_merge.addr() + host_split_count),
+          0.0f);
 
-    //   // Extract split particles
+      // Extract split particles
 
-    //   dim3 block(256);
-    //   dim3 grid((host_split_count + block.x - 1) / block.x);
+      dim3 block(256);
+      dim3 grid((host_split_count + block.x - 1) / block.x);
 
-    //   extract_split_particles_kernel<<<grid, block>>>(
-    //       split_particles.addr(), new_masses.addr(), new_positions.addr(),
-    //       new_velocities.addr(), host_split_count);
+      extract_split_particles_kernel<<<grid, block>>>(
+          split_particles.addr(), new_masses.addr(), new_positions.addr(),
+          new_velocities.addr(), host_split_count);
 
-    //   CUDA_CALL(cudaDeviceSynchronize());
-    //   CHECK_KERNEL();
+      CUDA_CALL(cudaDeviceSynchronize());
+      CHECK_KERNEL();
 
-    //   // Add new particles
-    //   particles->add_elements(new_masses, new_positions, new_velocities,
-    //                           host_split_count);
+      // Add new particles
+      particles->add_elements(new_masses, new_positions, new_velocities,
+                              host_split_count);
 
-    //   // Append zeros to buffers
-    //   _buffer_remove.append(new_remove);
-    //   _buffer_merge_count.append(new_merge_count);
-    //   _buffer_merge.append(new_merge);
+      // Append zeros to buffers
+      _buffer_remove.append(new_remove);
+      _buffer_merge_count.append(new_merge_count);
+      _buffer_merge.append(new_merge);
 
-    //   // Verify sizes match
-    //   if (_buffer_remove.length() != particles->size() ||
-    //       _buffer_merge_count.length() != particles->size() ||
-    //       _buffer_merge.length() != particles->size()) {
-    //     throw std::runtime_error(
-    //         "Buffer sizes don't match particle count after split");
-    //   }
-    // }
+      // Verify sizes match
+      if (_buffer_remove.length() != particles->size() ||
+          _buffer_merge_count.length() != particles->size() ||
+          _buffer_merge.length() != particles->size()) {
+        throw std::runtime_error(
+            "Buffer sizes don't match particle count after split");
+      }
+    }
     // change in mass
 
     // Print total mass after
