@@ -37,7 +37,7 @@ GranularSystem::GranularSystem(
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)),
       _upsampled(std::move(upsampled_particles)), _solver(_particles),
-      _upsampled_dim(10), _space_size(space_size), _dt(dt), _g(g),
+      _upsampled_dim(15), _space_size(space_size), _dt(dt), _g(g),
       _cell_length(cell_length),
       _cell_start_particle(cell_size.x * cell_size.y * cell_size.z + 1),
       _cell_start_boundary(cell_size.x * cell_size.y * cell_size.z + 1),
