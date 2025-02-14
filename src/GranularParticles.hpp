@@ -7,7 +7,8 @@ public:
   explicit GranularParticles(const std::vector<float3> &p)
       : Particles(p), _mass(p.size()), _scaled_mass(p.size()),
         _surface(p.size()), _particle_2_cell(p.size()), _num_surface(p.size()),
-        _is_animated(p.size()), _surface_distance(p.size()) {
+        _is_animated(p.size()), _surface_distance(p.size()),
+        _adaptive_last_step(p.size()) {
     CUDA_CALL(cudaMemcpy(_pos.addr(), &p[0], sizeof(float3) * p.size(),
                          cudaMemcpyHostToDevice));
   }
@@ -22,6 +23,7 @@ public:
   int *get_surface_ptr() const { return _surface.addr(); }
   float *get_surface_distance_ptr() const { return _surface_distance.addr(); }
   int *get_num_surface_ptr() const { return _num_surface.addr(); }
+  int *get_adaptive_last_step_ptr() const { return _adaptive_last_step.addr(); }
 
   const DArray<float> &get_mass() const { return _mass; }
 
@@ -40,6 +42,12 @@ public:
 
     try {
       _particle_2_cell.compact(removal_flags);
+    } catch (std::exception &e) {
+      std::cerr << "Mismatch in particle_2_cell: " << e.what() << std::endl;
+    }
+
+    try {
+      _adaptive_last_step.compact(removal_flags);
     } catch (std::exception &e) {
       std::cerr << "Mismatch in particle_2_cell: " << e.what() << std::endl;
     }
@@ -75,20 +83,22 @@ public:
     _mass.append(mass);
 
     // Create temporary arrays for surface and particle_2_cell
-    DArray<int> new_surface(num);
     DArray<int> new_particle_2_cell(num);
+    DArray<int> new_adaptive_last_step(num);
 
-    // Fill temporary arrays with zeros
-    thrust::fill(thrust::device,
-                 thrust::device_pointer_cast(new_surface.addr()),
-                 thrust::device_pointer_cast(new_surface.addr() + num), 0);
     thrust::fill(
         thrust::device, thrust::device_pointer_cast(new_particle_2_cell.addr()),
         thrust::device_pointer_cast(new_particle_2_cell.addr() + num), 0);
 
+    thrust::fill(
+        thrust::device,
+        thrust::device_pointer_cast(new_adaptive_last_step.addr()),
+        thrust::device_pointer_cast(new_adaptive_last_step.addr() + num), 1);
+
     // Append the temporary arrays
     // _surface.append(new_surface);
     _particle_2_cell.append(new_particle_2_cell);
+    _adaptive_last_step.append(new_adaptive_last_step);
 
     // Call parent class add_elements
     Particles::add_elements(pos, vel);
@@ -113,4 +123,5 @@ protected:
   DArray<int> _num_surface;
   DArray<int> _particle_2_cell; // lookup key
   DArray<int> _is_animated;     // 1 if particle should be animated, 0 otherwise
+  DArray<int> _adaptive_last_step;
 };

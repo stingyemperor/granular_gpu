@@ -97,6 +97,13 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   // TODO: resize remaning stuff
 
   final_update(particles, dt);
+
+  thrust::fill(
+      thrust::device,
+      thrust::device_pointer_cast(particles->get_adaptive_last_step_ptr()),
+      thrust::device_pointer_cast(particles->get_adaptive_last_step_ptr() +
+                                  particles->size()),
+      0);
 }
 
 // WARNING: Seems to cause issues with incorrect neighbors
@@ -197,10 +204,11 @@ struct final_velocity_functor {
   {}
 
   __host__ __device__ float3
-  operator()(const thrust::tuple<float3, float3> &t) const {
+  operator()(const thrust::tuple<float3, float3, int> &t) const {
     const float dt_inv = 1.0f / dt;
     const float3 &pos = thrust::get<0>(t);
     const float3 &pos_t = thrust::get<1>(t);
+    const int &adaptive_last = thrust::get<2>(t);
 
     // Calculate raw velocity
     float3 vel =
@@ -210,19 +218,23 @@ struct final_velocity_functor {
     // Calculate speed
     float speed = length(vel);
 
-    if (speed > min_speed) {
-      // Calculate damping factor based on speed
-      float t =
-          clamp((speed - min_speed) / (max_speed - min_speed), 0.0f, 1.0f);
+    if (adaptive_last == 1) {
+      vel *= 0.5f;
+    } else {
+      if (speed > min_speed) {
+        // Calculate damping factor based on speed
+        float t =
+            clamp((speed - min_speed) / (max_speed - min_speed), 0.0f, 1.0f);
 
-      // Smooth interpolation between min and max damping
-      float damping = min_damping + (max_damping - min_damping) * t;
+        // Smooth interpolation between min and max damping
+        float damping = min_damping + (max_damping - min_damping) * t;
 
-      // Apply non-linear damping
-      float damping_factor = damping + (1.0f - damping) * expf(-speed * 0.1f);
+        // Apply non-linear damping
+        float damping_factor = damping + (1.0f - damping) * expf(-speed * 0.1f);
 
-      // Apply damping
-      vel *= damping_factor;
+        // Apply damping
+        vel *= damping_factor;
+      }
     }
 
     return vel;
@@ -233,10 +245,12 @@ void Solver::final_update(std::shared_ptr<GranularParticles> &particles,
 
   // update velocity
   auto begin = thrust::make_zip_iterator(
-      thrust::make_tuple(particles->get_pos_ptr(), _pos_t.addr()));
-  auto end = thrust::make_zip_iterator(
-      thrust::make_tuple(particles->get_pos_ptr() + particles->size(),
-                         _pos_t.addr() + particles->size()));
+      thrust::make_tuple(particles->get_pos_ptr(), _pos_t.addr(),
+                         particles->get_adaptive_last_step_ptr()));
+  auto end = thrust::make_zip_iterator(thrust::make_tuple(
+      particles->get_pos_ptr() + particles->size(),
+      _pos_t.addr() + particles->size(),
+      particles->get_adaptive_last_step_ptr() + particles->size()));
 
   thrust::transform(
       thrust::device, begin, end, particles->get_vel_ptr(),
@@ -598,7 +612,8 @@ __device__ bool isAlmostZero(float x) {
 __global__ void merge_count_gpu(const int num, float *mass_del,
                                 float *mass_granular, float3 *vel_granular,
                                 int *merge_count, int *remove, float3 *vel_del,
-                                const int blend_factor) {
+                                const int blend_factor,
+                                int *adaptive_last_step) {
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
     return;
@@ -608,6 +623,8 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
     const float delta = mass_del[i] / blend_factor;
     const float3 delta_vel = vel_del[i] / blend_factor;
     mass_granular[i] += delta;
+    adaptive_last_step[i] = 1;
+
     // vel_granular[i] += delta_vel;
 
     // Debug
@@ -619,6 +636,7 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
       if (mass_del[i] < 0) {
         // Only mark for removal if this particle is giving mass
         atomicExch(&remove[i], 1);
+        adaptive_last_step[i] = 0;
         // printf("Particle %d marked for removal (final mass %.3f)\n", i,
         //        mass_granular[i]);
       } else {
@@ -721,7 +739,7 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
                           int *cell_start_boundary, const float max_mass,
                           const int3 cell_size, SplitParticle *split_particles,
                           int *split_count, const float density,
-                          const float cell_length) {
+                          const float cell_length, int *adaptive_last_step) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
@@ -760,6 +778,7 @@ __global__ void split_gpu(const int num, float3 *pos_granular,
 
   // Store new particle data
   split_particles[new_idx] = new_particle;
+  adaptive_last_step[i] = 1;
 }
 // Define the extraction kernel properly
 __global__ void extract_split_particles_kernel(SplitParticle *splits,
@@ -825,9 +844,6 @@ void Solver::adaptive_sampling(
 
     auto m_t = thrust::device_pointer_cast(particles->get_mass_ptr());
 
-    thrust::fill(thrust::device, _buffer_adaptive_last_step.addr(),
-                 _buffer_adaptive_last_step.addr() + particles->size(), 0);
-
     DArray<float> old_masses(particles->size());
     CUDA_CALL(cudaMemcpy(old_masses.addr(), particles->get_mass_ptr(),
                          sizeof(float) * particles->size(),
@@ -891,7 +907,8 @@ void Solver::adaptive_sampling(
     merge_count_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
         num, _buffer_merge.addr(), particles->get_mass_ptr(),
         particles->get_vel_ptr(), _buffer_merge_count.addr(),
-        _buffer_remove.addr(), _buffer_merge_velocity.addr(), _blend_factor);
+        _buffer_remove.addr(), _buffer_merge_velocity.addr(), _blend_factor,
+        particles->get_adaptive_last_step_ptr());
 
     CUDA_CALL(cudaDeviceSynchronize());
 
@@ -912,7 +929,8 @@ void Solver::adaptive_sampling(
         particles->get_surface_ptr(), _buffer_remove.addr(),
         _buffer_merge.addr(), cell_start_granular.addr(),
         cell_start_boundary.addr(), max_mass, cell_size, split_particles.addr(),
-        d_split_count, density, cell_length);
+        d_split_count, density, cell_length,
+        particles->get_adaptive_last_step_ptr());
 
     // // Print final state before removal
     // std::cout << "\nFinal state before removal:\n";

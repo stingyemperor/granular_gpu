@@ -27,9 +27,9 @@
     "z": 0.0
   },
   "particle_translation": {
-    "x": 0.0,
+    "x": -0.05,
     "y": 0.0,
-    "z": 0.0
+    "z": 0.1
   },
   "obj_file": "",
   "is_adaptive": 1

@@ -54,7 +54,7 @@ static float zoom = 0.3f;
 static int frameId = 0;
 static float totalTime = 0.0f;
 bool running = false;
-int show_surface = 2;
+int show_surface = 1;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
@@ -1253,7 +1253,7 @@ static void displayFunc(void) {
               upsampled_particle_radius);
   // renderUpsampledParticles();
 
-  renderBoundaryCorners();
+  // renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -1326,7 +1326,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/corner.json");
+      config = loadSceneConfig("scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

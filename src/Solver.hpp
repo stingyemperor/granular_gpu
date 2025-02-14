@@ -14,8 +14,7 @@ public:
         _buffer_remove(particles->size()), _buffer_split(particles->size()),
         _buffer_merge(particles->size()),
         _buffer_merge_velocity(particles->size()),
-        _buffer_merge_count(particles->size()),
-        _buffer_adaptive_last_step(particles->size()) {
+        _buffer_merge_count(particles->size()) {
 
     thrust::device_ptr<int> thrust_remove =
         thrust::device_pointer_cast(_buffer_remove.addr());
@@ -37,9 +36,6 @@ public:
         thrust::device_pointer_cast(_buffer_merge_velocity.addr());
     thrust::fill(thrust::device, thrust_merge_velocity,
                  thrust_merge_velocity + particles->size(), zero);
-
-    thrust::fill(thrust::device, _buffer_adaptive_last_step.addr(),
-                 _buffer_adaptive_last_step.addr() + particles->size(), 0);
   }
 
   void step(std::shared_ptr<GranularParticles> &paticles,
@@ -111,5 +107,4 @@ private:
   DArray<float> _buffer_merge;
   DArray<float3> _buffer_merge_velocity;
   DArray<int> _buffer_merge_count;
-  DArray<int> _buffer_adaptive_last_step;
 };
