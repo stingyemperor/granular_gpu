@@ -31,5 +31,6 @@
     "y": 0.1,
     "z": 5.0
   },
-  "obj_file": ""
+  "obj_file": "",
+  "is_adaptive": false
 }

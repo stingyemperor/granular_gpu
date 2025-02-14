@@ -33,7 +33,8 @@ GranularSystem::GranularSystem(
     std::shared_ptr<GranularParticles> &upsampled_particles,
     const float3 space_size, const float cell_length, const float dt,
     const float3 g, int3 cell_size, const float density,
-    const float upsampled_radius, const bool is_move_boundary)
+    const float upsampled_radius, const bool is_move_boundary,
+    const int is_adaptive)
     : _particles(std::move(granular_particles)),
       _boundaries(std::move(boundary_particles)),
       _upsampled(std::move(upsampled_particles)), _solver(_particles),
@@ -49,7 +50,7 @@ GranularSystem::GranularSystem(
       _upsampled_radius(upsampled_radius), _buffer_boundary(_particles->size()),
       _buffer_cover_vector(_particles->size()),
       _buffer_num_surface_neighbors(_particles->size()),
-      _is_move_boundary(is_move_boundary) {
+      _is_move_boundary(is_move_boundary), _is_adaptive(is_adaptive) {
   // initalize the boundary_particles
   neighbor_search_boundary(_boundaries, _cell_start_boundary);
   // Set the mass of all the particles to 1
@@ -417,17 +418,19 @@ float GranularSystem::step() {
                              _cell_start_boundary, _cell_size, _space_size,
                              _cell_length, _density);
 
-    set_surface_particles(_particles, _cell_start_particle);
+    if (_is_adaptive == 1) {
+      set_surface_particles(_particles, _cell_start_particle);
 
-    cudaDeviceSynchronize();
+      cudaDeviceSynchronize();
 
-    find_distance_to_surface(_particles, _cell_start_particle);
+      find_distance_to_surface(_particles, _cell_start_particle);
 
-    cudaDeviceSynchronize();
+      cudaDeviceSynchronize();
 
-    _solver.adaptive_sampling(_particles, _boundaries, _cell_start_particle,
-                              _cell_start_boundary, _max_mass, _cell_size,
-                              _space_size, _cell_length, _density);
+      _solver.adaptive_sampling(_particles, _boundaries, _cell_start_particle,
+                                _cell_start_boundary, _max_mass, _cell_size,
+                                _space_size, _cell_length, _density);
+    }
 
   } catch (const char *s) {
     std::cout << s << "\n";

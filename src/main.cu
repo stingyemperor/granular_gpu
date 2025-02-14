@@ -25,6 +25,7 @@ int num_picked = 0; // Keep track of number of picked particles
 float3 last_pick_pos = make_float3(0.0f, 0.0f, 0.0f);
 std::string obj_file;
 std::vector<float3> stored_additional_particles;
+int is_adaptive = 1;
 
 using json = nlohmann::json;
 // vbo and GL variables
@@ -86,6 +87,7 @@ struct SceneConfig {
   float3 particle_translation;
   int scene;
   std::string obj_file;
+  int is_adaptive;
 };
 
 struct AnimationState {
@@ -103,7 +105,7 @@ struct AnimationState {
 };
 
 AnimationState animation_state;
-enum Scene { PILING = 0, BOX = 1, EXCAVATOR = 2, FUNNEL = 3 };
+enum Scene { PILING = 0, BOX = 1, EXCAVATOR = 2, FUNNEL = 3, CORNER = 4 };
 
 SceneConfig loadSceneConfig(const std::string &config_file) {
   SceneConfig config;
@@ -148,6 +150,7 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
                                ceil(config.space_size.z / config.cell_length));
 
   config.obj_file = j["obj_file"];
+  config.is_adaptive = j["is_adaptive"];
 
   return config;
 }
@@ -593,12 +596,53 @@ void init_granular_system() {
     CUDA_CALL(cudaMemcpy(
         boundary_particles->get_is_animated_ptr(), animated_markers.data(),
         animated_markers.size() * sizeof(int), cudaMemcpyHostToDevice));
+  } else if (scene == Scene::CORNER) {
+
+    // front and back
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.y; ++j) {
+        auto x = make_float3(i, j, 0) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        // x = make_float3(i, j, compact_size.z - 1) /
+        //     make_float3(compact_size - make_int3(1)) * space_size;
+        // pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // top and bottom
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(i, 0, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        // x = make_float3(i, compact_size.y - 1, j + 1) /
+        //     make_float3(compact_size - make_int3(1)) * space_size;
+        // pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // left and right
+    for (auto i = 0; i < compact_size.y - 2; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(0, i + 1, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        // x = make_float3(compact_size.x - 1, i + 1, j + 1) /
+        //     make_float3(compact_size - make_int3(1)) * space_size;
+        // pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+
+    for (auto &p : pos) {
+      p += boundary_translation;
+    }
+
+    boundary_particles = std::make_shared<GranularParticles>(pos);
   }
 
   p_system = std::make_shared<GranularSystem>(
       granular_particles, boundary_particles, upsampled_particles, space_size,
       cell_length, dt, G, cell_size, density, upsampled_particle_radius,
-      is_move);
+      is_move, is_adaptive);
 }
 
 __global__ void animateParticles(float3 *positions, int *is_animated,
@@ -1209,7 +1253,7 @@ static void displayFunc(void) {
               upsampled_particle_radius);
   // renderUpsampledParticles();
 
-  // renderBoundaryCorners();
+  renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -1282,7 +1326,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/excavator.json");
+      config = loadSceneConfig("scenes/corner.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
@@ -1302,6 +1346,7 @@ int main(int argc, char *argv[]) {
     particle_translation = config.particle_translation;
     scene = config.scene;
     obj_file = config.obj_file;
+    is_adaptive = config.is_adaptive;
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_MULTISAMPLE);

@@ -270,9 +270,9 @@ __device__ void boundary_constraint(float3 &del_p, int &n, int i,
       const float del_p_i_perp_norm =
           norm3df(del_p_i_perp.x, del_p_i_perp.y, del_p_i_perp.z);
 
-      float min_fric = min((0.01 + r_i) * 0.5 / del_p_i_perp_norm, 1.0f);
+      float min_fric = min((0.01 + r_i) * 0.8 / del_p_i_perp_norm, 1.0f);
 
-      if (del_p_i_perp_norm < (r_i + 0.01) * 0.5) {
+      if (del_p_i_perp_norm < (r_i + 0.01) * 0.8) {
         del_p -= del_p_i;
       } else {
         del_p -= del_p_i * min_fric;
@@ -825,8 +825,8 @@ void Solver::adaptive_sampling(
 
     auto m_t = thrust::device_pointer_cast(particles->get_mass_ptr());
 
-    thrust::fill(thrust::device, _buffer_merged_last_step.addr(),
-                 _buffer_merged_last_step.addr() + particles->size(), 0);
+    thrust::fill(thrust::device, _buffer_adaptive_last_step.addr(),
+                 _buffer_adaptive_last_step.addr() + particles->size(), 0);
 
     DArray<float> old_masses(particles->size());
     CUDA_CALL(cudaMemcpy(old_masses.addr(), particles->get_mass_ptr(),

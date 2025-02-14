@@ -10,7 +10,8 @@ public:
                  std::shared_ptr<GranularParticles> &upsampled_particles,
                  float3 space_size, float cell_length, float dt, float3 g,
                  int3 cell_size, const float density,
-                 const float upsampled_radius, const bool is_move_boundary);
+                 const float upsampled_radius, const bool is_move_boundary,
+                 const int is_adaptive);
 
   GranularSystem(const GranularSystem &) = delete;
   GranularSystem &operator=(const GranularSystem &) = delete;
@@ -82,6 +83,7 @@ private:
   DArray<int> _buffer_num_surface_neighbors;
   std::vector<float> frame_times; // Store frame times
   const bool _is_move_boundary;
+  const int _is_adaptive;
 
   Solver _solver;
 

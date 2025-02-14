@@ -31,5 +31,6 @@
     "y": 1.9,
     "z": 0.0
   },
-  "obj_file": "obj/funnel.txt"
+  "obj_file": "obj/funnel.txt",
+  "is_adaptive": false
 }
