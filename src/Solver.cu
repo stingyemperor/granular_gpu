@@ -218,23 +218,19 @@ struct final_velocity_functor {
     // Calculate speed
     float speed = length(vel);
 
-    if (adaptive_last == 1) {
-      vel *= 0.5f;
-    } else {
-      if (speed > min_speed) {
-        // Calculate damping factor based on speed
-        float t =
-            clamp((speed - min_speed) / (max_speed - min_speed), 0.0f, 1.0f);
+    if (speed > min_speed) {
+      // Calculate damping factor based on speed
+      float t =
+          clamp((speed - min_speed) / (max_speed - min_speed), 0.0f, 1.0f);
 
-        // Smooth interpolation between min and max damping
-        float damping = min_damping + (max_damping - min_damping) * t;
+      // Smooth interpolation between min and max damping
+      float damping = min_damping + (max_damping - min_damping) * t;
 
-        // Apply non-linear damping
-        float damping_factor = damping + (1.0f - damping) * expf(-speed * 0.1f);
+      // Apply non-linear damping
+      float damping_factor = damping + (1.0f - damping) * expf(-speed * 0.1f);
 
-        // Apply damping
-        vel *= damping_factor;
-      }
+      // Apply damping
+      vel *= damping_factor;
     }
 
     return vel;
@@ -819,38 +815,38 @@ void Solver::adaptive_sampling(
     return;
 
   // Store initial state and particle IDs
-  std::vector<float> initial_masses(num);
-  std::vector<float3> initial_positions(num);
-  std::vector<float3> initial_velocities(num);
-  std::vector<int> remove_flags(num);
-  std::vector<float> merge_values(num);
+  // std::vector<float> initial_masses(num);
+  // std::vector<float3> initial_positions(num);
+  // std::vector<float3> initial_velocities(num);
+  // std::vector<int> remove_flags(num);
+  // std::vector<float> merge_values(num);
 
-  // Copy initial data to host
-  CUDA_CALL(cudaMemcpy(initial_masses.data(), particles->get_mass_ptr(),
-                       sizeof(float) * num, cudaMemcpyDeviceToHost));
-  CUDA_CALL(cudaMemcpy(initial_positions.data(), particles->get_pos_ptr(),
-                       sizeof(float3) * num, cudaMemcpyDeviceToHost));
-  CUDA_CALL(cudaMemcpy(initial_velocities.data(), particles->get_vel_ptr(),
-                       sizeof(float3) * num, cudaMemcpyDeviceToHost));
-  CUDA_CALL(cudaMemcpy(remove_flags.data(), _buffer_remove.addr(),
-                       sizeof(int) * num, cudaMemcpyDeviceToHost));
-  CUDA_CALL(cudaMemcpy(merge_values.data(), _buffer_merge.addr(),
-                       sizeof(float) * num, cudaMemcpyDeviceToHost));
+  // // Copy initial data to host
+  // CUDA_CALL(cudaMemcpy(initial_masses.data(), particles->get_mass_ptr(),
+  //                      sizeof(float) * num, cudaMemcpyDeviceToHost));
+  // CUDA_CALL(cudaMemcpy(initial_positions.data(), particles->get_pos_ptr(),
+  //                      sizeof(float3) * num, cudaMemcpyDeviceToHost));
+  // CUDA_CALL(cudaMemcpy(initial_velocities.data(), particles->get_vel_ptr(),
+  //                      sizeof(float3) * num, cudaMemcpyDeviceToHost));
+  // CUDA_CALL(cudaMemcpy(remove_flags.data(), _buffer_remove.addr(),
+  //                      sizeof(int) * num, cudaMemcpyDeviceToHost));
+  // CUDA_CALL(cudaMemcpy(merge_values.data(), _buffer_merge.addr(),
+  //                      sizeof(float) * num, cudaMemcpyDeviceToHost));
 
-  cudaDeviceSynchronize();
+  // cudaDeviceSynchronize();
 
   try {
     // old mass
 
-    auto m_t = thrust::device_pointer_cast(particles->get_mass_ptr());
+    // auto m_t = thrust::device_pointer_cast(particles->get_mass_ptr());
 
-    DArray<float> old_masses(particles->size());
-    CUDA_CALL(cudaMemcpy(old_masses.addr(), particles->get_mass_ptr(),
-                         sizeof(float) * particles->size(),
-                         cudaMemcpyDeviceToDevice));
+    // DArray<float> old_masses(particles->size());
+    // CUDA_CALL(cudaMemcpy(old_masses.addr(), particles->get_mass_ptr(),
+    //                      sizeof(float) * particles->size(),
+    //                      cudaMemcpyDeviceToDevice));
 
-    const float old_mass =
-        thrust::reduce(m_t, m_t + num, 0, thrust::plus<float>());
+    // const float old_mass =
+    //     thrust::reduce(m_t, m_t + num, 0, thrust::plus<float>());
 
     // Run merge kernel
     if (t_merge_iter == 5) {
@@ -1010,19 +1006,19 @@ void Solver::adaptive_sampling(
 
     CUDA_CALL(cudaDeviceSynchronize());
     // Get new size after compacting
-    const int new_num = particles->size();
+    // const int new_num = particles->size();
 
-    // Get final state
-    std::vector<float> final_masses(new_num);
-    std::vector<float3> final_positions(new_num);
-    std::vector<float3> final_velocities(new_num);
+    // // Get final state
+    // std::vector<float> final_masses(new_num);
+    // std::vector<float3> final_positions(new_num);
+    // std::vector<float3> final_velocities(new_num);
 
-    CUDA_CALL(cudaMemcpy(final_masses.data(), particles->get_mass_ptr(),
-                         sizeof(float) * new_num, cudaMemcpyDeviceToHost));
-    CUDA_CALL(cudaMemcpy(final_positions.data(), particles->get_pos_ptr(),
-                         sizeof(float3) * new_num, cudaMemcpyDeviceToHost));
-    CUDA_CALL(cudaMemcpy(final_velocities.data(), particles->get_vel_ptr(),
-                         sizeof(float3) * new_num, cudaMemcpyDeviceToHost));
+    // CUDA_CALL(cudaMemcpy(final_masses.data(), particles->get_mass_ptr(),
+    //                      sizeof(float) * new_num, cudaMemcpyDeviceToHost));
+    // CUDA_CALL(cudaMemcpy(final_positions.data(), particles->get_pos_ptr(),
+    //                      sizeof(float3) * new_num, cudaMemcpyDeviceToHost));
+    // CUDA_CALL(cudaMemcpy(final_velocities.data(), particles->get_vel_ptr(),
+    //                      sizeof(float3) * new_num, cudaMemcpyDeviceToHost));
 
     // // First, create a mapping of original to new indices
     // std::vector<int> index_mapping(num, -1); // Initialize all to -1

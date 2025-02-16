@@ -54,7 +54,7 @@ static float zoom = 0.3f;
 static int frameId = 0;
 static float totalTime = 0.0f;
 bool running = false;
-int show_surface = 1;
+int show_surface = 2;
 
 // particle system variables
 std::shared_ptr<GranularSystem> p_system;
@@ -234,16 +234,28 @@ void saveUpsampledPositionsToVTK(
                        positions.size() * sizeof(float3),
                        cudaMemcpyDeviceToHost));
 
+  // Calculate centroid
+  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  for (const auto &pos : positions) {
+    centroid += pos;
+  }
+  centroid = centroid / (float)positions.size();
+
   // Write VTK header
   outFile << "# vtk DataFile Version 3.0\n";
   outFile << "Upsampled Granular Particles\n";
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points
+  // Write points (centered around origin)
   outFile << "POINTS " << positions.size() << " float\n";
   for (const auto &pos : positions) {
-    outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+    // Subtract centroid to center around origin
+    float3 centered_pos =
+        make_float3(pos.x - centroid.x, pos.y - centroid.y, pos.z - centroid.z);
+    // Write in desired coordinate order (x, z, y)
+    outFile << centered_pos.x << " " << centered_pos.z << " " << centered_pos.y
+            << "\n";
   }
 
   // Write cells (each particle is a vertex cell)
@@ -686,34 +698,54 @@ void updateAnimation(float dt) {
 
   animation_state.animation_time += dt;
 
-  // Calculate translation and rotation based on animation time
   float3 translation = make_float3(0.0f, 0.0f, 0.0f);
   float rotation = 0.0f;
 
   // First 5 seconds: translation
-  if (animation_state.animation_time <= 5.0f &&
+  if (animation_state.animation_time <= 2.5f &&
       !animation_state.translation_complete) {
     translation = animation_state.translation_direction *
                   animation_state.translation_speed * dt;
   } else if (!animation_state.translation_complete) {
     animation_state.translation_complete = true;
     animation_state.animation_time = 0.0f;
+
+    // Recalculate rotation center when translation completes
+    float3 *positions;
+    int size = p_system->get_boundaries()->size();
+    positions = new float3[size];
+    CUDA_CALL(cudaMemcpy(positions, p_system->get_boundaries()->get_pos_ptr(),
+                         size * sizeof(float3), cudaMemcpyDeviceToHost));
+
+    float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+    int count = 0;
+    for (int i = animation_state.start_index;
+         i < animation_state.start_index + animation_state.num_particles; i++) {
+      centroid += positions[i];
+      count++;
+    }
+    if (count > 0) {
+      animation_state.rotation_center = centroid / (float)count;
+    }
+
+    delete[] positions;
   }
 
   // After translation: rotation
+  // Change from 90.0f to 45.0f for half the rotation
   if (animation_state.translation_complete &&
-      animation_state.rotation_angle < 90.0f) {
-    float rotation_delta = animation_state.rotation_speed * dt;
-    animation_state.rotation_angle += rotation_delta;
+      animation_state.rotation_angle < 45.0f) { // Changed from 90.0f to 45.0f
+    float rotation_delta = -animation_state.rotation_speed * dt;
+    animation_state.rotation_angle += abs(rotation_delta);
     rotation = rotation_delta;
 
-    if (animation_state.rotation_angle >= 90.0f) {
+    if (animation_state.rotation_angle >=
+        45.0f) { // Changed from 90.0f to 45.0f
       animation_state.is_animating = false;
     }
   }
 
   // Apply animation
-
   if (animation_state.is_animating) {
     const int block_size = 256;
     int num_blocks =
@@ -1124,14 +1156,15 @@ void renderBoundaryCorners() {
 void one_step() {
   // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
 
-  if (!stored_additional_particles.empty()) {
-    std::filesystem::create_directory("additional_boundary_data");
-    std::string boundary_filename =
-        "additional_boundary_data/boundary_" + std::to_string(frameId) + ".vtk";
-    saveAdditionalBoundaryParticlesToVTK(p_system->get_boundaries(),
-                                         stored_additional_particles,
-                                         boundary_filename);
-  }
+  // if (!stored_additional_particles.empty()) {
+  //   std::filesystem::create_directory("additional_boundary_data");
+  //   std::string boundary_filename =
+  //       "additional_boundary_data/boundary_" + std::to_string(frameId) +
+  //       ".vtk";
+  //   saveAdditionalBoundaryParticlesToVTK(p_system->get_boundaries(),
+  //                                        stored_additional_particles,
+  //                                        boundary_filename);
+  // }
   ++frameId;
   p_system->step();
   // TODO fix
@@ -1173,49 +1206,83 @@ static void displayFunc(void) {
   glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  // First draw text
-  glDisable(GL_DEPTH_TEST);
+  // Text rendering code remains the same...
+
+  // Save current matrices and attributes
+  glPushAttrib(GL_ALL_ATTRIB_BITS);
   glMatrixMode(GL_PROJECTION);
-  glPushMatrix(); // Save current projection matrix
+  glPushMatrix();
   glLoadIdentity();
   glOrtho(0, glutGet(GLUT_WINDOW_WIDTH), 0, glutGet(GLUT_WINDOW_HEIGHT), -1, 1);
+
   glMatrixMode(GL_MODELVIEW);
-  glPushMatrix(); // Save current modelview matrix
+  glPushMatrix();
   glLoadIdentity();
 
-  glColor3f(0.0f, 0.0f, 0.0f);
-  glRasterPos2i(50, 50);
-  char text[50];
-  snprintf(text, sizeof(text), "Particles: %d", p_system->size());
-  for (char *c = text; *c != '\0'; c++) {
-    glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, *c); // Larger font
+  // Disable depth testing and lighting for text
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_LIGHTING);
+
+  // Set text color (white for visibility)
+  glColor3f(1.0f, 1.0f, 1.0f);
+
+  // Position text
+  glRasterPos2i(10, glutGet(GLUT_WINDOW_HEIGHT) - 50);
+
+  // Create and render text
+  std::string text = "Frame: " + std::to_string(frameId);
+  for (const char &c : text) {
+    glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, c);
   }
 
-  // Restore matrices for 3D rendering
-  glPopMatrix();
+  // Restore matrices and attributes
   glMatrixMode(GL_PROJECTION);
   glPopMatrix();
   glMatrixMode(GL_MODELVIEW);
-  glEnable(GL_DEPTH_TEST);
+  glPopMatrix();
+  glPopAttrib();
 
-  // Then continue with your 3D rendering code
-  // ----------------------------------------------------------------
-  // We DO NOT reset the projection matrix here anymore!
-  // The reshape() callback now handles the correct aspect ratio.
-  // ----------------------------------------------------------------
-
-  // Set up the camera in ModelView
-
+  // Continue with regular 3D rendering
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
-  gluLookAt(0, 0, 1.0 / zoom, 0, 0, 0, 0, 1, 0);
 
-  // Some example transformations
+  // Rest of your original display code...
+  if (scene == Scene::PILING) {
+    float3 translated_eye =
+        make_float3(0, 0, 1.0f / zoom) + particle_translation;
+    float3 translated_center = make_float3(0, 0, 0) + particle_translation;
+    gluLookAt(translated_eye.x, translated_eye.y, translated_eye.z,
+              translated_center.x, translated_center.y, translated_center.z, 0,
+              1, 0);
+  } else {
+    gluLookAt(0, 0, 1.0f / zoom, 0, 0, 0, 0, 1, 0);
+  }
+
+  // Modify the camera setup to include the translation
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity();
+
+  if (scene == Scene::PILING) {
+    // Apply the same translation as particles to the camera position
+    float3 translated_eye =
+        make_float3(0, 0, 1.0f / zoom) + particle_translation;
+    float3 translated_center = make_float3(0, 0, 0) + particle_translation;
+    gluLookAt(translated_eye.x, translated_eye.y,
+              translated_eye.z, // Eye position
+              translated_center.x, translated_center.y,
+              translated_center.z, // Look at point
+              0, 1, 0);            // Up vector
+  } else {
+    // Original camera setup for other scenes
+    gluLookAt(0, 0, 1.0f / zoom, // Eye position
+              0, 0, 0,           // Look at point
+              0, 1, 0);          // Up vector
+  }
+
+  // Rest of the rendering code remains the same...
   glPushMatrix();
   glRotatef(rot[0], 1.0f, 0.0f, 0.0f);
-  glRotatef(rot[1], 0.0f, 1.0f, 0.0f);
-
-  // Draw a wire cube for reference
+  glRotatef(rot[1], 0.0f, 1.0f, 0.0f); // Draw a wire cube for reference
   glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
   glLineWidth(2.0);
   glEnable(GL_MULTISAMPLE_ARB);
@@ -1251,7 +1318,7 @@ static void displayFunc(void) {
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
               upsampled_particle_radius);
-  // renderUpsampledParticles();
+  renderUpsampledParticles();
 
   // renderBoundaryCorners();
 

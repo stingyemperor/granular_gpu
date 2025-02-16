@@ -8,7 +8,7 @@
 class Solver {
 public:
   Solver(const std::shared_ptr<GranularParticles> &particles)
-      : _max_iter(5), _blend_factor(4), _buffer_int(particles->size()),
+      : _max_iter(5), _blend_factor(30), _buffer_int(particles->size()),
         _buffer_float(particles->size()), _buffer_float3(particles->size()),
         _pos_t(particles->size()), _num_constraints(particles->size()),
         _buffer_remove(particles->size()), _buffer_split(particles->size()),
@@ -44,7 +44,7 @@ public:
             const DArray<int> &cell_start_boundary, float3 space_size,
             int3 cell_size, float cell_length, float dt, float3 G,
             const float density);
-  ~Solver(){};
+  ~Solver() {};
   void project(std::shared_ptr<GranularParticles> &particles,
                const std::shared_ptr<GranularParticles> &boundaries,
                const DArray<int> &cell_start_granular,

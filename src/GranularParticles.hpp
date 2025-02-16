@@ -35,18 +35,6 @@ public:
     }
 
     try {
-      // _surface.compact(removal_flags);
-    } catch (std::exception &e) {
-      std::cerr << "Mismatch in surface: " << e.what() << std::endl;
-    }
-
-    try {
-      _particle_2_cell.compact(removal_flags);
-    } catch (std::exception &e) {
-      std::cerr << "Mismatch in particle_2_cell: " << e.what() << std::endl;
-    }
-
-    try {
       _adaptive_last_step.compact(removal_flags);
     } catch (std::exception &e) {
       std::cerr << "Mismatch in particle_2_cell: " << e.what() << std::endl;
@@ -69,27 +57,23 @@ public:
     if (new_size > _mass.capacity()) {
       _mass.resize(new_size);
       // _surface.resize(new_size);
-      _particle_2_cell.resize(new_size);
     }
 
     // Resize only the arrays we're actually using
     if (new_size > _mass.capacity()) {
       _mass.resize(new_size);
       // _surface.resize(new_size);
-      _particle_2_cell.resize(new_size);
     }
 
     // Append to all arrays that get compacted
     _mass.append(mass);
 
     // Create temporary arrays for surface and particle_2_cell
-    DArray<int> new_particle_2_cell(num);
     DArray<int> new_adaptive_last_step(num);
 
-    thrust::fill(
-        thrust::device, thrust::device_pointer_cast(new_particle_2_cell.addr()),
-        thrust::device_pointer_cast(new_particle_2_cell.addr() + num), 0);
+    // Initialize new_particle_2_cell with zeros
 
+    // Initialize new_adaptive_last_step with ones
     thrust::fill(
         thrust::device,
         thrust::device_pointer_cast(new_adaptive_last_step.addr()),
@@ -97,18 +81,17 @@ public:
 
     // Append the temporary arrays
     // _surface.append(new_surface);
-    _particle_2_cell.append(new_particle_2_cell);
     _adaptive_last_step.append(new_adaptive_last_step);
 
     // Call parent class add_elements
     Particles::add_elements(pos, vel);
 
     // Verify sizes
-    const unsigned int final_size = size();
-    if (_mass.length() != final_size ||
-        _particle_2_cell.length() != final_size) {
-      throw std::runtime_error("Array size mismatch after adding elements");
-    }
+    // const unsigned int final_size = size();
+    // if (_mass.length() != final_size ||
+    //     _particle_2_cell.length() != final_size) {
+    //   throw std::runtime_error("Array size mismatch after adding elements");
+    // }
   }
 
   int *get_is_animated_ptr() { return _is_animated.addr(); }

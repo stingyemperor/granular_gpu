@@ -11,7 +11,7 @@
     "z": 0.0
   },
   "sph_spacing": 0.02,
-  "init_spacing": 0.032,
+  "init_spacing": 0.03,
   "smoothing_radius": 0.04,
   "cell_length": 0.0404,
   "density": 238732.4146,
@@ -32,5 +32,5 @@
     "z": 5.0
   },
   "obj_file": "",
-  "is_adaptive": false
+  "is_adaptive": 1
 }
