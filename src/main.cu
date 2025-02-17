@@ -10,10 +10,13 @@
 #include <cuda_runtime.h>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 
 // interactivity
@@ -26,6 +29,7 @@ float3 last_pick_pos = make_float3(0.0f, 0.0f, 0.0f);
 std::string obj_file;
 std::vector<float3> stored_additional_particles;
 int is_adaptive = 1;
+std::string save_file;
 
 using json = nlohmann::json;
 // vbo and GL variables
@@ -88,6 +92,7 @@ struct SceneConfig {
   int scene;
   std::string obj_file;
   int is_adaptive;
+  std::string save_file;
 };
 
 struct AnimationState {
@@ -151,6 +156,7 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
 
   config.obj_file = j["obj_file"];
   config.is_adaptive = j["is_adaptive"];
+  config.save_file = j["save_file"];
 
   return config;
 }
@@ -175,6 +181,107 @@ std::vector<float3> readBoundaryParticlesFromFile(const std::string &filename,
 
   file.close();
   return positions;
+}
+
+void saveBoundaryParticlesToVTK(
+    const std::shared_ptr<GranularParticles> &boundary_particles,
+    const std::shared_ptr<GranularParticles> &upsampled_particles,
+    int frameId) {
+  std::string base_dir = save_file + "_boundary";
+  std::filesystem::create_directories(base_dir);
+  std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
+
+  std::ofstream outFile(filename);
+  if (!outFile.is_open()) {
+    std::cerr << "Failed to open file: " << filename << std::endl;
+    return;
+  }
+
+  // Get positions from both boundary and upsampled particles
+  std::vector<float3> boundary_positions(boundary_particles->size());
+  std::vector<int> is_animated(boundary_particles->size());
+  std::vector<float3> upsampled_positions(upsampled_particles->size());
+
+  CUDA_CALL(cudaMemcpy(
+      boundary_positions.data(), boundary_particles->get_pos_ptr(),
+      boundary_positions.size() * sizeof(float3), cudaMemcpyDeviceToHost));
+
+  CUDA_CALL(
+      cudaMemcpy(is_animated.data(), boundary_particles->get_is_animated_ptr(),
+                 is_animated.size() * sizeof(int), cudaMemcpyDeviceToHost));
+
+  CUDA_CALL(cudaMemcpy(
+      upsampled_positions.data(), upsampled_particles->get_pos_ptr(),
+      upsampled_positions.size() * sizeof(float3), cudaMemcpyDeviceToHost));
+
+  // Filter animated boundary particles
+  std::vector<float3> animated_positions;
+  for (size_t i = 0; i < boundary_positions.size(); ++i) {
+    if (is_animated[i] == 1) {
+      animated_positions.push_back(boundary_positions[i]);
+    }
+  }
+
+  if (animated_positions.empty()) {
+    std::cerr << "Warning: Frame " << frameId
+              << " contains no animated boundary particles" << std::endl;
+    return;
+  }
+
+  // Calculate centroid of upsampled particles (same as in
+  // saveUpsampledPositionsToVTK)
+  std::vector<float3> valid_upsampled;
+  for (const auto &pos : upsampled_positions) {
+    if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
+      valid_upsampled.push_back(pos);
+    }
+  }
+
+  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  for (const auto &pos : valid_upsampled) {
+    centroid += pos;
+  }
+  centroid = centroid / (float)valid_upsampled.size();
+
+  // Find minimum y value after centering (using upsampled particles)
+  float min_y = 1000000.f;
+  for (const auto &pos : valid_upsampled) {
+    float centered_y = pos.y - centroid.y;
+    min_y = fminf(min_y, centered_y);
+  }
+
+  // Calculate y offset to ensure all y values are positive
+  float y_offset = min_y < 0.0f ? -min_y : 0.0f;
+
+  // Write VTK header
+  outFile << "# vtk DataFile Version 3.0\n";
+  outFile << "Animated Boundary Particles\n";
+  outFile << "ASCII\n";
+  outFile << "DATASET UNSTRUCTURED_GRID\n";
+
+  // Write points using the same centering as upsampled particles
+  outFile << "POINTS " << animated_positions.size() << " float\n";
+  for (const auto &pos : animated_positions) {
+    float3 centered_pos = make_float3(
+        pos.x - centroid.x, pos.y - centroid.y + y_offset, pos.z - centroid.z);
+    outFile << centered_pos.x << " " << centered_pos.z << " " << centered_pos.y
+            << "\n";
+  }
+
+  // Write cells
+  outFile << "CELLS " << animated_positions.size() << " "
+          << animated_positions.size() * 2 << "\n";
+  for (size_t i = 0; i < animated_positions.size(); i++) {
+    outFile << "1 " << i << "\n";
+  }
+
+  // Write cell types
+  outFile << "CELL_TYPES " << animated_positions.size() << "\n";
+  for (size_t i = 0; i < animated_positions.size(); i++) {
+    outFile << "1\n";
+  }
+
+  outFile.close();
 }
 
 void saveAdditionalBoundaryParticlesToVTK(
@@ -219,8 +326,16 @@ void saveAdditionalBoundaryParticlesToVTK(
 void saveUpsampledPositionsToVTK(
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
+
+  // Create base directory based on adaptive setting
+  std::string base_dir = save_file + (is_adaptive ? "_adaptive" : "_normal");
+
+  // Create directories if they don't exist
+  std::filesystem::create_directories(base_dir);
+
   // Create filename with frame number
-  std::string filename = "data/" + std::to_string(frameId) + ".vtk";
+  std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
+
   std::ofstream outFile(filename);
 
   if (!outFile.is_open()) {
@@ -234,12 +349,44 @@ void saveUpsampledPositionsToVTK(
                        positions.size() * sizeof(float3),
                        cudaMemcpyDeviceToHost));
 
-  // Calculate centroid
-  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  // Check for NaN values and count valid particles
+  std::vector<float3> valid_positions;
+  valid_positions.reserve(positions.size());
+
   for (const auto &pos : positions) {
+    if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
+      valid_positions.push_back(pos);
+    }
+  }
+
+  if (valid_positions.empty()) {
+    std::cerr << "Warning: Frame " << frameId
+              << " contains no valid positions (all NaN)" << std::endl;
+    return;
+  }
+
+  if (valid_positions.size() < positions.size()) {
+    std::cerr << "Warning: Frame " << frameId << " - Filtered out "
+              << (positions.size() - valid_positions.size())
+              << " particles with NaN values" << std::endl;
+  }
+
+  // Calculate centroid using only valid positions
+  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  for (const auto &pos : valid_positions) {
     centroid += pos;
   }
-  centroid = centroid / (float)positions.size();
+  centroid = centroid / (float)valid_positions.size();
+
+  // Find minimum y value after centering
+  float min_y = 1000000.f;
+  for (const auto &pos : valid_positions) {
+    float centered_y = pos.y - centroid.y;
+    min_y = fminf(min_y, centered_y);
+  }
+
+  // Calculate y offset to ensure all y values are positive
+  float y_offset = min_y < 0.0f ? -min_y : 0.0f;
 
   // Write VTK header
   outFile << "# vtk DataFile Version 3.0\n";
@@ -247,33 +394,30 @@ void saveUpsampledPositionsToVTK(
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points (centered around origin)
-  outFile << "POINTS " << positions.size() << " float\n";
-  for (const auto &pos : positions) {
-    // Subtract centroid to center around origin
-    float3 centered_pos =
-        make_float3(pos.x - centroid.x, pos.y - centroid.y, pos.z - centroid.z);
-    // Write in desired coordinate order (x, z, y)
+  // Write points (centered around origin with positive y values)
+  outFile << "POINTS " << valid_positions.size() << " float\n";
+  for (const auto &pos : valid_positions) {
+    float3 centered_pos = make_float3(
+        pos.x - centroid.x, pos.y - centroid.y + y_offset, pos.z - centroid.z);
     outFile << centered_pos.x << " " << centered_pos.z << " " << centered_pos.y
             << "\n";
   }
 
-  // Write cells (each particle is a vertex cell)
-  outFile << "CELLS " << positions.size() << " " << positions.size() * 2
-          << "\n";
-  for (size_t i = 0; i < positions.size(); i++) {
+  // Write cells
+  outFile << "CELLS " << valid_positions.size() << " "
+          << valid_positions.size() * 2 << "\n";
+  for (size_t i = 0; i < valid_positions.size(); i++) {
     outFile << "1 " << i << "\n";
   }
 
-  // Write cell types (VTK_VERTEX = 1)
-  outFile << "CELL_TYPES " << positions.size() << "\n";
-  for (size_t i = 0; i < positions.size(); i++) {
+  // Write cell types
+  outFile << "CELL_TYPES " << valid_positions.size() << "\n";
+  for (size_t i = 0; i < valid_positions.size(); i++) {
     outFile << "1\n";
   }
 
   outFile.close();
 }
-
 void saveFrameTimes(const std::vector<float> &frame_times) {
   std::ofstream outFile("frame_times_adaptive.txt");
   for (float time : frame_times) {
@@ -1165,9 +1309,12 @@ void one_step() {
   //                                        stored_additional_particles,
   //                                        boundary_filename);
   // }
+
+  saveBoundaryParticlesToVTK(p_system->get_boundaries(),
+                             p_system->get_upsampled(), frameId);
+
   ++frameId;
   p_system->step();
-  // TODO fix
   // const auto milliseconds = p_system->step();
   // totalTime += milliseconds;
   // printf("Frame %d - %2.2f ms, avg time - %2.2f ms/frame (%3.2f FPS)\r",
@@ -1231,6 +1378,8 @@ static void displayFunc(void) {
 
   // Create and render text
   std::string text = "Frame: " + std::to_string(frameId);
+  text +=
+      "  Particles: " + std::to_string(p_system->size()); // Add particle count
   for (const char &c : text) {
     glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_24, c);
   }
@@ -1393,7 +1542,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig("scenes/excavator.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
@@ -1414,6 +1563,7 @@ int main(int argc, char *argv[]) {
     scene = config.scene;
     obj_file = config.obj_file;
     is_adaptive = config.is_adaptive;
+    save_file = config.save_file;
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_MULTISAMPLE);

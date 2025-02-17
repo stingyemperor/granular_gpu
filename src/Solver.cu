@@ -25,6 +25,7 @@
 __device__ __constant__ double pi = 3.14159265358979323846;
 __device__ __constant__ float r_9 = 493.8271605;
 __device__ __constant__ float r_9_b = 1111.1111111;
+__device__ __constant__ float target_density = 100.0f; // For water-like density
 // __device__ __constant__ float r_9 = 277.7777778;
 
 #define EPSILON_m 1e-4f // Small threshold for comparison
@@ -200,7 +201,7 @@ struct final_velocity_functor {
         min_speed(1.0f),    // Adjust these thresholds based on your simulation
         max_speed(10.0f),   // Adjust these thresholds based on your simulation
         min_damping(0.99f), // Almost no damping for slow particles
-        max_damping(0.7f)   // Stronger damping for fast particles
+        max_damping(0.99f)  // Stronger damping for fast particles
   {}
 
   __host__ __device__ float3
@@ -218,6 +219,10 @@ struct final_velocity_functor {
     // Calculate speed
     float speed = length(vel);
 
+    if (speed < 0.01f) {
+      return make_float3(0, 0, 0);
+    }
+
     if (speed > min_speed) {
       // Calculate damping factor based on speed
       float t =
@@ -231,6 +236,10 @@ struct final_velocity_functor {
 
       // Apply damping
       vel *= damping_factor;
+
+      if (adaptive_last == 1) {
+        vel *= 0.95f;
+      }
     }
 
     return vel;
@@ -259,10 +268,11 @@ void Solver::final_update(std::shared_ptr<GranularParticles> &particles,
                        cudaMemcpyDeviceToDevice));
 }
 
-__device__ void boundary_constraint(float3 &del_p, int &n, int i,
-                                    const float3 pos_p, float3 *pos_b, float *m,
-                                    int j, const int cell_end,
-                                    const int density) {
+__device__ void boundary_constraint(float3 &del_p, int &n, const int i,
+                                    const float3 pos_p, const float3 *pos_b,
+                                    const float *m, int j, const int cell_end,
+                                    const int density,
+                                    const float *scaled_mass) {
   while (j < cell_end) {
     const float dis = norm3df(pos_p.x - pos_b[j].x, pos_p.y - pos_b[j].y,
                               pos_p.z - pos_b[j].z);
@@ -297,12 +307,13 @@ __device__ void boundary_constraint(float3 &del_p, int &n, int i,
 __device__ void particles_constraint(float3 &del_p, int &n, int i,
                                      float3 *pos_p, float *m, int j,
                                      const int cell_end, const int density,
-                                     int *n_constraints, float3 *delta_pos) {
+                                     int *n_constraints, float3 *delta_pos,
+                                     const float *scaled_mass) {
   while (j < cell_end) {
     if (i != j) {
       const float3 p_12 = pos_p[i] - pos_p[j];
-      const float inv_m_i = 1 / m[i];
-      const float inv_m_j = 1 / m[j];
+      const float inv_m_i = 1 / scaled_mass[i];
+      const float inv_m_j = 1 / scaled_mass[j];
       const float inv_m_sum = 1.0 / (inv_m_i + inv_m_j);
       const float r_i = cbrtf((3 * m[i]) / (4 * pi * density));
       const float r_j = cbrtf((3 * m[j]) / (4 * pi * density));
@@ -352,7 +363,7 @@ __global__ void compute_delta_pos(float3 *delta_pos, int *n,
                                   int *cell_start_granular,
                                   int *cell_start_boundary,
                                   const int3 cell_size, const float cell_length,
-                                  const int density) {
+                                  const int density, float *scaled_mass) {
 
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
@@ -377,11 +388,11 @@ __global__ void compute_delta_pos(float3 *delta_pos, int *n,
     //                          1], radius);
     boundary_constraint(dp, n[i], i, pos_granular[i], pos_boundary,
                         mass_granular, cell_start_boundary[cellID],
-                        cell_start_boundary[cellID + 1], density);
+                        cell_start_boundary[cellID + 1], density, scaled_mass);
 
     particles_constraint(
         dp, n[i], i, pos_granular, mass_granular, cell_start_granular[cellID],
-        cell_start_granular[cellID + 1], density, n, delta_pos);
+        cell_start_granular[cellID + 1], density, n, delta_pos, scaled_mass);
   }
 
   delta_pos[i] = dp;
@@ -429,9 +440,9 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
     compute_delta_pos<<<(num - 1) / block_size + 1, block_size>>>(
 
         _buffer_float3.addr(), _num_constraints.addr(), _pos_t.addr(),
-        boundaries->get_pos_ptr(), particles->get_scaled_mass_ptr(), num,
+        boundaries->get_pos_ptr(), particles->get_mass_ptr(), num,
         cell_start_granular.addr(), cell_start_boundary.addr(), cell_size,
-        cell_length, density);
+        cell_length, density, particles->get_scaled_mass_ptr());
 
     // update the position
     auto begin_p = thrust::make_zip_iterator(
@@ -482,7 +493,7 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
         _buffer_float3.addr(), _num_constraints.addr(), _pos_t.addr(),
         boundaries->get_pos_ptr(), particles->get_mass_ptr(), num,
         cell_start_granular.addr(), cell_start_boundary.addr(), cell_size,
-        cell_length, density);
+        cell_length, density, particles->get_scaled_mass_ptr());
     //
     auto begin = thrust::make_zip_iterator(thrust::make_tuple(
         _buffer_float3.addr(), _num_constraints.addr(), _pos_t.addr()));
@@ -500,13 +511,23 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
   }
 }
 
-__global__ void merge_mark_gpu(const int num, float3 *pos_granular,
-                               float *mass_granular, float3 *vel_granular,
-                               int *surface, float *surface_distance,
-                               int *num_surface_neighbors, int *remove,
-                               float *merge, float3 *merge_velocity,
-                               int *cell_start_granular, float max_mass,
-                               const int3 cell_size, const float cell_length) {
+__device__ bool should_merge(int i, int j, float3 pos_i, float3 pos_j) {
+  // Use particle positions to create a consistent merge order
+  if (pos_i.x != pos_j.x)
+    return pos_i.x < pos_j.x;
+  if (pos_i.y != pos_j.y)
+    return pos_i.y < pos_j.y;
+  if (pos_i.z != pos_j.z)
+    return pos_i.z < pos_j.z;
+  return i < j; // fallback to index comparison only if positions are identical
+}
+
+__global__ void
+merge_mark_gpu(const int num, float3 *pos_granular, float *mass_granular,
+               float3 *vel_granular, int *surface, float *surface_distance,
+               int *num_surface_neighbors, int *remove, float *merge,
+               float3 *merge_velocity, int *cell_start_granular, float max_mass,
+               const int3 cell_size, const float cell_length, int *merge_lock) {
   const unsigned int i = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
   if (i >= num)
     return;
@@ -527,6 +548,9 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
   float closest_dis = 1000.0f;
   int closest_index = -1;
 
+  float local_density = 0.0f;
+  int local_count = 0;
+
 #pragma unroll
   for (auto m = 0; m < 27; __syncthreads(), ++m) {
     const auto cellID = particlePos2cellIdx(
@@ -542,6 +566,13 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
       // if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0 ||
       //     num_surface_neighbors[j] > 3) {
       //
+
+      float dis = length(pos_i - pos_granular[j]);
+      if (dis < 0.035) {
+        local_density += mass_granular[j];
+        local_count++;
+      }
+
       if (j <= i || atomicOr(&remove[j], 0) != 0 || surface[j] != 0 ||
           surface_distance[i] < 100.0f) {
         j++;
@@ -556,7 +587,7 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
       }
 
       float3 p_j = pos_granular[j];
-      float dis = length(pos_i - p_j);
+      // float dis = length(pos_i - p_j);
       // float dis = norm3df(pos_i.x - p_j.x, pos_i.y - p_j.y, pos_i.z - p_j.z);
 
       if (dis < 0.035) {
@@ -570,33 +601,51 @@ __global__ void merge_mark_gpu(const int num, float3 *pos_granular,
   }
 
   // Only proceed if we found a merge candidate
-  if (closest_index != -1) {
-    if (atomicCAS(&remove[i], 0, -1) == 0 && surface[i] == 0 &&
-        surface_distance[i] > 100.0f) {
-      if (atomicCAS(&remove[closest_index], 0, -1) == 0 &&
-          surface[closest_index] == 0 &&
-          surface_distance[closest_index] > 100.0f) {
-        atomicExch(&merge[closest_index], mass_i);
-        atomicExch(&merge[i], -mass_i);
+  if (local_count > 0) {
+    local_density /= local_count;
 
-        const float m_t = 1 / (mass_i + mass_granular[closest_index]);
-        const float3 vel_t =
-            m_t * (mass_i * vel_i + mass_granular[closest_index] +
-                   vel_granular[closest_index]);
+    if (closest_index != -1) {
+      if (atomicCAS(&remove[i], 0, -1) == 0 && surface[i] == 0 &&
+          surface_distance[i] > 100.0f) {
+        if (atomicCAS(&remove[closest_index], 0, -1) == 0 &&
+            surface[closest_index] == 0 &&
+            surface_distance[closest_index] > 100.0f) {
+          atomicExch(&merge[closest_index], mass_i);
+          atomicExch(&merge[i], -mass_i);
 
-        atomicExch(&merge_velocity[closest_index].x, vel_t.x);
-        atomicExch(&merge_velocity[closest_index].y, vel_t.y);
-        atomicExch(&merge_velocity[closest_index].z, vel_t.z);
+          const float m_t = 1 / (mass_i + mass_granular[closest_index]);
+          float3 vel_t =
+              m_t * (mass_i * vel_i + mass_granular[closest_index] *
+                                          vel_granular[closest_index]);
 
-        atomicExch(&merge_velocity[i].x, -vel_t.x);
-        atomicExch(&merge_velocity[i].y, -vel_t.y);
-        atomicExch(&merge_velocity[i].z, -vel_t.z);
+          atomicExch(&merge_velocity[closest_index].x, vel_t.x);
+          atomicExch(&merge_velocity[closest_index].y, vel_t.y);
+          atomicExch(&merge_velocity[closest_index].z, vel_t.z);
 
-        // printf("Merge set up: particle %d (mass %.3f) -> particle %d (mass "
-        //        "%.3f)\n",
-        //        i, mass_i, closest_index, mass_granular[closest_index]);
-      } else {
-        atomicExch(&remove[i], 0);
+          atomicExch(&merge_velocity[i].x, -vel_t.x);
+          atomicExch(&merge_velocity[i].y, -vel_t.y);
+          atomicExch(&merge_velocity[i].z, -vel_t.z);
+
+          float3 merge_vel = vel_t; // Your existing merged velocity calculation
+
+          // Apply density-dependent velocity correction
+          float density_factor = min(1.0f, local_density / target_density);
+          merge_vel *=
+              (1.0f + (1.0f - density_factor) *
+                          0.1f); // Boost velocity in less dense regions
+
+          // Update merged velocity
+          atomicExch(&merge_velocity[closest_index].x, merge_vel.x);
+          atomicExch(&merge_velocity[closest_index].y, merge_vel.y);
+          atomicExch(&merge_velocity[closest_index].z, merge_vel.z);
+
+          // printf("Merge set up: particle %d (mass %.3f) -> particle %d (mass
+          // "
+          //        "%.3f)\n",
+          //        i, mass_i, closest_index, mass_granular[closest_index]);
+        } else {
+          atomicExch(&remove[i], 0);
+        }
       }
     }
   }
@@ -620,8 +669,7 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
     const float3 delta_vel = vel_del[i] / blend_factor;
     mass_granular[i] += delta;
     adaptive_last_step[i] = 1;
-
-    // vel_granular[i] += delta_vel;
+    vel_granular[i] += delta_vel;
 
     // Debug
     // printf("Particle %d: step %d/%d, mass %.3f, delta %.3f\n", i, old_count +
@@ -629,7 +677,7 @@ __global__ void merge_count_gpu(const int num, float *mass_del,
     //        blend_factor, mass_granular[i], delta);
 
     if (old_count + 1 == blend_factor) {
-      if (mass_del[i] < 0) {
+      if (mass_del[i] < 0.000f) {
         // Only mark for removal if this particle is giving mass
         atomicExch(&remove[i], 1);
         adaptive_last_step[i] = 0;
@@ -847,16 +895,22 @@ void Solver::adaptive_sampling(
 
     // const float old_mass =
     //     thrust::reduce(m_t, m_t + num, 0, thrust::plus<float>());
+    // //
+    // thrust::fill(
+    //     thrust::device,
+    //     thrust::device_pointer_cast(_buffer_merge_lock.addr()),
+    //     thrust::device_pointer_cast(_buffer_merge_lock.addr() + num), 0);
 
     // Run merge kernel
-    if (t_merge_iter == 5) {
+    if (t_merge_iter == 1) {
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),
           particles->get_surface_distance_ptr(),
           particles->get_num_surface_ptr(), _buffer_remove.addr(),
           _buffer_merge.addr(), _buffer_merge_velocity.addr(),
-          cell_start_granular.addr(), max_mass, cell_size, cell_length);
+          cell_start_granular.addr(), max_mass, cell_size, cell_length,
+          _buffer_merge_lock.addr());
 
       t_merge_iter = 0;
     }
@@ -1146,25 +1200,24 @@ void Solver::adaptive_sampling(
       _buffer_merge.append(new_merge);
 
       // Verify sizes match
-      if (_buffer_remove.length() != particles->size() ||
-          _buffer_merge_count.length() != particles->size() ||
-          _buffer_merge.length() != particles->size()) {
-        throw std::runtime_error(
-            "Buffer sizes don't match particle count after split");
-      }
+      // if (_buffer_remove.length() != particles->size() ||
+      //     _buffer_merge_count.length() != particles->size() ||
+      //     _buffer_merge.length() != particles->size()) {
+      //   throw std::runtime_error(
+      //       "Buffer sizes don't match particle count after split");
+      // }
     }
     // change in mass
 
     // Print total mass after
     // auto m_t_n = thrust::device_pointer_cast(particles->get_mass_ptr());
-    // const float new_mass = thrust::reduce(m_t_n, m_t_n +
-    // particles->size(), 0,
+    // const float new_mass = thrust::reduce(m_t_n, m_t_n + particles->size(),
+    // 0,
     //                                       thrust::plus<float>());
     // std::cout << "Total mass after: " << new_mass << "\n";
     // if ((new_mass - old_mass) != 0) {
     //   std::cout << "Change in mass " << new_mass - old_mass << "\n";
     // }
-    //
 
   } catch (const std::exception &e) {
     std::cerr << "Error in adaptive_sampling: " << e.what() << std::endl;
@@ -1243,7 +1296,7 @@ __global__ void update_upsampled_cuda(
 
   // Update velocity and position
   float3 new_vel;
-  if (granular_weight > 0.0f) {
+  if (granular_weight > 1e-6f) {
     // If there are nearby granular particles, use their influence
     weighted_vel /= granular_weight;
     float alpha = max(0.0f, 1.0f - max_w_ij);
@@ -1252,11 +1305,22 @@ __global__ void update_upsampled_cuda(
   } else {
     // If no granular particles nearby, use current velocity with boundary
     // repulsion
-    new_vel = vel_upsampled[i] * 0.9f + g_t * d_t;
+    new_vel = vel_upsampled[i] + g_t * d_t;
   }
 
   // Add boundary repulsion to velocity
   new_vel += boundary_repulsion;
+
+  // Clamp velocities to prevent extreme values
+  const float max_velocity = 10.0f; // Adjust as needed
+  new_vel.x = clamp(new_vel.x, -max_velocity, max_velocity);
+  new_vel.y = clamp(new_vel.y, -max_velocity, max_velocity);
+  new_vel.z = clamp(new_vel.z, -max_velocity, max_velocity);
+
+  // Check for NaN values
+  if (isnan(new_vel.x) || isnan(new_vel.y) || isnan(new_vel.z)) {
+    new_vel = make_float3(0.0f, 0.0f, 0.0f);
+  }
 
   // Update velocity and position
   vel_upsampled[i] = new_vel;
@@ -1268,18 +1332,18 @@ __global__ void update_upsampled_cuda(
     vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
   }
 
-  // if (pos_upsampled[i].x > 1.95) {
-  //   pos_upsampled[i].x = 1.95;
-  // }
-  // if (pos_upsampled[i].x < 0.05) {
-  //   pos_upsampled[i].x = 0.05;
-  // }
-  // if (pos_upsampled[i].z > 1.75) {
-  //   pos_upsampled[i].z = 1.75;
-  // }
-  // if (pos_upsampled[i].z < 0.05) {
-  //   pos_upsampled[i].z = 0.05;
-  // }
+  if (pos_upsampled[i].x > 1.95) {
+    pos_upsampled[i].x = 1.95;
+  }
+  if (pos_upsampled[i].x < 0.05) {
+    pos_upsampled[i].x = 0.05;
+  }
+  if (pos_upsampled[i].z > 1.75) {
+    pos_upsampled[i].z = 1.75;
+  }
+  if (pos_upsampled[i].z < 0.05) {
+    pos_upsampled[i].z = 0.05;
+  }
 
   return;
 }
