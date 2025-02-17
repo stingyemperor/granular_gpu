@@ -238,7 +238,7 @@ struct final_velocity_functor {
       vel *= damping_factor;
 
       if (adaptive_last == 1) {
-        vel *= 0.95f;
+        vel *= 0.98f;
       }
     }
 
@@ -1332,18 +1332,18 @@ __global__ void update_upsampled_cuda(
     vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
   }
 
-  if (pos_upsampled[i].x > 1.95) {
-    pos_upsampled[i].x = 1.95;
-  }
-  if (pos_upsampled[i].x < 0.05) {
-    pos_upsampled[i].x = 0.05;
-  }
-  if (pos_upsampled[i].z > 1.75) {
-    pos_upsampled[i].z = 1.75;
-  }
-  if (pos_upsampled[i].z < 0.05) {
-    pos_upsampled[i].z = 0.05;
-  }
+  // if (pos_upsampled[i].x > 1.95) {
+  //   pos_upsampled[i].x = 1.95;
+  // }
+  // if (pos_upsampled[i].x < 0.05) {
+  //   pos_upsampled[i].x = 0.05;
+  // }
+  // if (pos_upsampled[i].z > 1.75) {
+  //   pos_upsampled[i].z = 1.75;
+  // }
+  // if (pos_upsampled[i].z < 0.05) {
+  //   pos_upsampled[i].z = 0.05;
+  // }
 
   return;
 }

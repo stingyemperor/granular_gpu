@@ -10,28 +10,29 @@
     "y": -9.8,
     "z": 0.0
   },
-  "sph_spacing": 0.02,
-  "init_spacing": 0.032,
+  "sph_spacing": 0.002,
+  "init_spacing": 0.0032,
   "smoothing_radius": 0.04,
   "cell_length": 0.0404,
-  "density": 238732.4146,
+  "density": 238732414.6,
   "box_size": {
-    "x": 50,
-    "y": 50,
-    "z": 40
+    "x": 100,
+    "y": 100,
+    "z": 100
   },
-  "scene": 2,
+  "scene": 1,
   "boundary_translation": {
     "x": 0.0,
     "y": 0.0,
     "z": 0.0
   },
   "particle_translation": {
-    "x": 0.0,
+    "x": -0.05,
     "y": 0.0,
-    "z": 0.0
+    "z": 0.1
   },
-  "obj_file": "obj/bucket.txt",
-  "is_adaptive": 1,
-  "save_file": "/home/samraatg/MEGA/cgi_2025_data/excavator"
+  "obj_file": "",
+  "is_adaptive": 0,
+  "save_boundary": false,
+  "save_file": "/home/samraatg/MEGA/cgi_2025_data/box"
 }

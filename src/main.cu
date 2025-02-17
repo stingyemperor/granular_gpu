@@ -110,7 +110,14 @@ struct AnimationState {
 };
 
 AnimationState animation_state;
-enum Scene { PILING = 0, BOX = 1, EXCAVATOR = 2, FUNNEL = 3, CORNER = 4 };
+enum Scene {
+  PILING = 0,
+  BOX = 1,
+  EXCAVATOR = 2,
+  FUNNEL = 3,
+  CORNER = 4,
+  BOX_OPENING = 5
+};
 
 SceneConfig loadSceneConfig(const std::string &config_file) {
   SceneConfig config;
@@ -793,6 +800,46 @@ void init_granular_system() {
     }
 
     boundary_particles = std::make_shared<GranularParticles>(pos);
+  } else if (scene == BOX_OPENING) {
+    // front and back
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.y; ++j) {
+        auto x = make_float3(i, j, 0) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, j, compact_size.z - 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // top and bottom
+    for (auto i = 0; i < compact_size.x; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(i, 0, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(i, compact_size.y - 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+    // left and right
+    for (auto i = 0; i < compact_size.y - 2; ++i) {
+      for (auto j = 0; j < compact_size.z - 2; ++j) {
+        auto x = make_float3(0, i + 1, j + 1) /
+                 make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+        x = make_float3(compact_size.x - 1, i + 1, j + 1) /
+            make_float3(compact_size - make_int3(1)) * space_size;
+        pos.push_back(0.99f * x + 0.005f * space_size);
+      }
+    }
+
+    for (auto &p : pos) {
+      p += boundary_translation;
+    }
+
+    boundary_particles = std::make_shared<GranularParticles>(pos);
   }
 
   p_system = std::make_shared<GranularSystem>(
@@ -1310,8 +1357,8 @@ void one_step() {
   //                                        boundary_filename);
   // }
 
-  saveBoundaryParticlesToVTK(p_system->get_boundaries(),
-                             p_system->get_upsampled(), frameId);
+  // saveBoundaryParticlesToVTK(p_system->get_boundaries(),
+  //                            p_system->get_upsampled(), frameId);
 
   ++frameId;
   p_system->step();
@@ -1542,7 +1589,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/excavator.json");
+      config = loadSceneConfig("scenes/piling.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
