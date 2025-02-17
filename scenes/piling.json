@@ -18,7 +18,7 @@
   "box_size": {
     "x": 20,
     "y": 100,
-    "z": 30
+    "z": 50
   },
   "scene": 0,
   "boundary_translation": {
@@ -33,5 +33,5 @@
   },
   "obj_file": "",
   "is_adaptive": 1,
-  "save_file": "/home/samraatg/MEGA/cgi_2025_data/piling"
+  "save_file": "/home/samraatg/Documents/cgi_backup/piling"
 }

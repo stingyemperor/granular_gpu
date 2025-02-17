@@ -1,6 +1,6 @@
 {
   "space_size": {
-    "x": 3.0,
+    "x": 2.8,
     "y": 2.8,
     "z": 2.8
   },
@@ -16,7 +16,7 @@
   "cell_length": 0.0404,
   "density": 238732.4146,
   "box_size": {
-    "x": 25,
+    "x": 40,
     "y": 39,
     "z": 39
   },
@@ -28,10 +28,10 @@
   },
   "particle_translation": {
     "x": 0.4,
-    "y": 1.9,
+    "y": 1.66,
     "z": 0.0
   },
   "obj_file": "obj/funnel.txt",
-  "is_adaptive": false,
-  "save_file": "/home/samraatg/MEGA/cgi_2025_data/funnel"
+  "is_adaptive": 1,
+  "save_file": "/home/samraatg/Documents/cgi_backup/funnel"
 }

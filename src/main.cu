@@ -190,11 +190,276 @@ std::vector<float3> readBoundaryParticlesFromFile(const std::string &filename,
   return positions;
 }
 
+void saveFunnelUpsampledPositionsToVTK(
+    const std::shared_ptr<GranularParticles> &upsampled_particles,
+    int frameId) {
+  // Create base directory based on adaptive setting
+  std::string base_dir = save_file + (is_adaptive ? "_adaptive" : "_normal");
+
+  // Create directories if they don't exist
+  std::filesystem::create_directories(base_dir);
+
+  // Create filename with frame number
+  std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
+
+  std::ofstream outFile(filename);
+
+  if (!outFile.is_open()) {
+    std::cerr << "Failed to open file: " << filename << std::endl;
+    return;
+  }
+
+  // Get positions from device
+  std::vector<float3> positions(upsampled_particles->size());
+  CUDA_CALL(cudaMemcpy(positions.data(), upsampled_particles->get_pos_ptr(),
+                       positions.size() * sizeof(float3),
+                       cudaMemcpyDeviceToHost));
+
+  // Check for NaN values and count valid particles
+  std::vector<float3> valid_positions;
+  valid_positions.reserve(positions.size());
+
+  for (const auto &pos : positions) {
+    if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
+      valid_positions.push_back(pos);
+    }
+  }
+
+  if (valid_positions.empty()) {
+    std::cerr << "Warning: Frame " << frameId
+              << " contains no valid positions (all NaN)" << std::endl;
+    return;
+  }
+
+  if (valid_positions.size() < positions.size()) {
+    std::cerr << "Warning: Frame " << frameId << " - Filtered out "
+              << (positions.size() - valid_positions.size())
+              << " particles with NaN values" << std::endl;
+  }
+
+  // Write VTK header
+  outFile << "# vtk DataFile Version 3.0\n";
+  outFile << "Upsampled Granular Particles\n";
+  outFile << "ASCII\n";
+  outFile << "DATASET UNSTRUCTURED_GRID\n";
+
+  // Write points with original positions
+  outFile << "POINTS " << valid_positions.size() << " float\n";
+  for (const auto &pos : valid_positions) {
+    outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+  }
+
+  // Write cells
+  outFile << "CELLS " << valid_positions.size() << " "
+          << valid_positions.size() * 2 << "\n";
+  for (size_t i = 0; i < valid_positions.size(); i++) {
+    outFile << "1 " << i << "\n";
+  }
+
+  // Write cell types
+  outFile << "CELL_TYPES " << valid_positions.size() << "\n";
+  for (size_t i = 0; i < valid_positions.size(); i++) {
+    outFile << "1\n";
+  }
+
+  outFile.close();
+}
+
+void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
+                         int frameId) {
+
+  // Create base directories for each mass range
+  std::string base_dir_light = save_file + "_mass_light";
+  std::string base_dir_medium = save_file + "_mass_medium";
+  std::string base_dir_heavy = save_file + "_mass_heavy";
+
+  std::filesystem::create_directories(base_dir_light);
+  std::filesystem::create_directories(base_dir_medium);
+  std::filesystem::create_directories(base_dir_heavy);
+
+  // Get positions and masses from device
+  std::vector<float3> positions(particles->size());
+  std::vector<float> masses(particles->size());
+
+  CUDA_CALL(cudaMemcpy(positions.data(), particles->get_pos_ptr(),
+                       positions.size() * sizeof(float3),
+                       cudaMemcpyDeviceToHost));
+
+  CUDA_CALL(cudaMemcpy(masses.data(), particles->get_mass_ptr(),
+                       masses.size() * sizeof(float), cudaMemcpyDeviceToHost));
+
+  // Separate particles by mass
+  std::vector<float3> light_particles;
+  std::vector<float3> medium_particles;
+  std::vector<float3> heavy_particles;
+
+  // Calculate centroid for all valid particles first
+  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  int valid_count = 0;
+
+  for (size_t i = 0; i < positions.size(); i++) {
+    const auto &pos = positions[i];
+    if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
+      centroid += pos;
+      valid_count++;
+    }
+  }
+
+  if (valid_count > 0) {
+    centroid = centroid / (float)valid_count;
+  }
+
+  // Find minimum y value after centering
+  float min_y = 1000000.f;
+  for (const auto &pos : positions) {
+    if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
+      float centered_y = pos.y - centroid.y;
+      min_y = fminf(min_y, centered_y);
+    }
+  }
+
+  // Calculate y offset to ensure all y values are positive
+  float y_offset = min_y < 0.0f ? -min_y : 0.0f;
+
+  // Separate particles by mass
+  for (size_t i = 0; i < positions.size(); i++) {
+    if (!isnan(positions[i].x) && !isnan(positions[i].y) &&
+        !isnan(positions[i].z)) {
+      float3 centered_pos = make_float3(positions[i].x - centroid.x,
+                                        positions[i].y - centroid.y + y_offset,
+                                        positions[i].z - centroid.z);
+
+      if (masses[i] < 2.0f) {
+        light_particles.push_back(centered_pos);
+      } else if (masses[i] >= 2.0f && masses[i] <= 3.0f) {
+        medium_particles.push_back(centered_pos);
+      } else {
+        heavy_particles.push_back(centered_pos);
+      }
+    }
+  }
+
+  // Helper lambda to write particles to VTK file
+  auto writeVTKFile = [](const std::string &filename,
+                         const std::vector<float3> &particles) {
+    std::ofstream outFile(filename);
+    if (!outFile.is_open()) {
+      std::cerr << "Failed to open file: " << filename << std::endl;
+      return;
+    }
+
+    outFile << "# vtk DataFile Version 3.0\n";
+    outFile << "Particles by Mass\n";
+    outFile << "ASCII\n";
+    outFile << "DATASET UNSTRUCTURED_GRID\n";
+    outFile << "POINTS " << particles.size() << " float\n";
+
+    for (const auto &pos : particles) {
+      outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+    }
+
+    outFile << "CELLS " << particles.size() << " " << particles.size() * 2
+            << "\n";
+    for (size_t i = 0; i < particles.size(); i++) {
+      outFile << "1 " << i << "\n";
+    }
+
+    outFile << "CELL_TYPES " << particles.size() << "\n";
+    for (size_t i = 0; i < particles.size(); i++) {
+      outFile << "1\n";
+    }
+
+    outFile.close();
+  };
+
+  // Save each group to its respective file
+  if (!light_particles.empty()) {
+    writeVTKFile(base_dir_light + "/" + std::to_string(frameId) + ".vtk",
+                 light_particles);
+  }
+  if (!medium_particles.empty()) {
+    writeVTKFile(base_dir_medium + "/" + std::to_string(frameId) + ".vtk",
+                 medium_particles);
+  }
+  if (!heavy_particles.empty()) {
+    writeVTKFile(base_dir_heavy + "/" + std::to_string(frameId) + ".vtk",
+                 heavy_particles);
+  }
+}
+
+void saveFunnelBoundaryParticlesToVTK(
+    const std::shared_ptr<GranularParticles> &boundary_particles,
+    const std::shared_ptr<GranularParticles> &upsampled_particles,
+    int frameId) {
+  std::string base_dir = save_file + "_boundary_adaptive";
+  std::filesystem::create_directories(base_dir);
+  std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
+
+  std::ofstream outFile(filename);
+  if (!outFile.is_open()) {
+    std::cerr << "Failed to open file: " << filename << std::endl;
+    return;
+  }
+
+  // Get positions from boundary particles
+  std::vector<float3> boundary_positions(boundary_particles->size());
+  std::vector<int> is_animated(boundary_particles->size());
+
+  CUDA_CALL(cudaMemcpy(
+      boundary_positions.data(), boundary_particles->get_pos_ptr(),
+      boundary_positions.size() * sizeof(float3), cudaMemcpyDeviceToHost));
+
+  CUDA_CALL(
+      cudaMemcpy(is_animated.data(), boundary_particles->get_is_animated_ptr(),
+                 is_animated.size() * sizeof(int), cudaMemcpyDeviceToHost));
+
+  // Filter animated boundary particles
+  std::vector<float3> animated_positions;
+  for (size_t i = 0; i < boundary_positions.size(); ++i) {
+    if (is_animated[i] == 1) {
+      animated_positions.push_back(boundary_positions[i]);
+    }
+  }
+
+  if (animated_positions.empty()) {
+    std::cerr << "Warning: Frame " << frameId
+              << " contains no animated boundary particles" << std::endl;
+    return;
+  }
+
+  // Write VTK header
+  outFile << "# vtk DataFile Version 3.0\n";
+  outFile << "Animated Boundary Particles\n";
+  outFile << "ASCII\n";
+  outFile << "DATASET UNSTRUCTURED_GRID\n";
+
+  // Write points using original positions
+  outFile << "POINTS " << animated_positions.size() << " float\n";
+  for (const auto &pos : animated_positions) {
+    // For FUNNEL scene, write coordinates directly without centering
+    outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+  }
+
+  // Write cells
+  outFile << "CELLS " << animated_positions.size() << " "
+          << animated_positions.size() * 2 << "\n";
+  for (size_t i = 0; i < animated_positions.size(); i++) {
+    outFile << "1 " << i << "\n";
+  }
+
+  // Write cell types
+  outFile << "CELL_TYPES " << animated_positions.size() << "\n";
+  for (size_t i = 0; i < animated_positions.size(); i++) {
+    outFile << "1\n";
+  }
+
+  outFile.close();
+}
 void saveBoundaryParticlesToVTK(
     const std::shared_ptr<GranularParticles> &boundary_particles,
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
-  std::string base_dir = save_file + "_boundary";
+  std::string base_dir = save_file + "_boundary_adaptive";
   std::filesystem::create_directories(base_dir);
   std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
 
@@ -302,26 +567,59 @@ void saveAdditionalBoundaryParticlesToVTK(
     return;
   }
 
+  // First, get upsampled particle positions to calculate the same centroid
+  std::vector<float3> upsampled_positions(p_system->get_upsampled()->size());
+  CUDA_CALL(cudaMemcpy(
+      upsampled_positions.data(), p_system->get_upsampled()->get_pos_ptr(),
+      upsampled_positions.size() * sizeof(float3), cudaMemcpyDeviceToHost));
+
+  // Calculate centroid using valid upsampled particles
+  std::vector<float3> valid_upsampled;
+  for (const auto &pos : upsampled_positions) {
+    if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
+      valid_upsampled.push_back(pos);
+    }
+  }
+
+  float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
+  for (const auto &pos : valid_upsampled) {
+    centroid += pos;
+  }
+  centroid = centroid / (float)valid_upsampled.size();
+
+  // Find minimum y value after centering
+  float min_y = 1000000.f;
+  for (const auto &pos : valid_upsampled) {
+    float centered_y = pos.y - centroid.y;
+    min_y = fminf(min_y, centered_y);
+  }
+
+  // Calculate y offset to ensure all y values are positive
+  float y_offset = min_y < 0.0f ? -min_y : 0.0f;
+
   // Write VTK header
   outFile << "# vtk DataFile Version 3.0\n";
   outFile << "Additional Boundary Particles\n";
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points
+  // Write points with the same centering as upsampled particles
   outFile << "POINTS " << original_additional_particles.size() << " float\n";
   for (const auto &pos : original_additional_particles) {
-    outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
+    float3 centered_pos = make_float3(
+        pos.x - centroid.x, pos.y - centroid.y + y_offset, pos.z - centroid.z);
+    outFile << centered_pos.x << " " << centered_pos.z << " " << centered_pos.y
+            << "\n";
   }
 
-  // Write cells (each particle is a vertex cell)
+  // Write cells
   outFile << "CELLS " << original_additional_particles.size() << " "
           << original_additional_particles.size() * 2 << "\n";
   for (size_t i = 0; i < original_additional_particles.size(); i++) {
     outFile << "1 " << i << "\n";
   }
 
-  // Write cell types (VTK_VERTEX = 1)
+  // Write cell types
   outFile << "CELL_TYPES " << original_additional_particles.size() << "\n";
   for (size_t i = 0; i < original_additional_particles.size(); i++) {
     outFile << "1\n";
@@ -426,7 +724,7 @@ void saveUpsampledPositionsToVTK(
   outFile.close();
 }
 void saveFrameTimes(const std::vector<float> &frame_times) {
-  std::ofstream outFile("frame_times_adaptive.txt");
+  std::ofstream outFile("frame_times.txt");
   for (float time : frame_times) {
     outFile << time << "\n";
   }
@@ -704,7 +1002,7 @@ void init_granular_system() {
 
         animation_state.start_index = base_boundary_count;
         animation_state.num_particles = additional_particles.size();
-        animation_state.is_animating = false;
+        animation_state.is_animating = true;
         animation_state.animation_time = 0.0f;
 
         // Calculate rotation center
@@ -1346,6 +1644,9 @@ void renderBoundaryCorners() {
 
 void one_step() {
   // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  // saveFunnelUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  // saveFunnelBoundaryParticlesToVTK(p_system->get_boundaries(),
+  //                                  p_system->get_upsampled(), frameId);
 
   // if (!stored_additional_particles.empty()) {
   //   std::filesystem::create_directory("additional_boundary_data");
@@ -1355,6 +1656,10 @@ void one_step() {
   //   saveAdditionalBoundaryParticlesToVTK(p_system->get_boundaries(),
   //                                        stored_additional_particles,
   //                                        boundary_filename);
+  // }
+  //
+  // if (frameId > 1400) {
+  //   saveParticlesByMass(p_system->get_particles(), frameId);
   // }
 
   // saveBoundaryParticlesToVTK(p_system->get_boundaries(),
@@ -1393,7 +1698,7 @@ void initGL(void) {
 
 static void displayFunc(void) {
   if (running) {
-    updateAnimation(dt);
+    // updateAnimation(dt);
     one_step();
   }
 
@@ -1516,7 +1821,7 @@ static void displayFunc(void) {
               upsampled_particle_radius);
   renderUpsampledParticles();
 
-  // renderBoundaryCorners();
+  renderBoundaryCorners();
 
   glPopMatrix();
   glPopMatrix();
@@ -1589,7 +1894,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/piling.json");
+      config = loadSceneConfig("scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

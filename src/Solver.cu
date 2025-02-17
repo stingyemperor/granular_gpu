@@ -757,19 +757,19 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
     //   j++;
     // }
 
-    // // Count boundary neighbors in this cell
-    // j = cell_start_boundary[cellID];
-    // while (j < cell_start_boundary[cellID + 1]) {
-    //   const float3 pos_j = pos_boundary[j];
-    //   const float dis = length(pos - pos_j);
-    //   if (dis < max_dist) {
-    //     neighbor_count++;
-    //     if (neighbor_count >= 2) {
-    //       return false; // Too many neighbors
-    //     }
-    //   }
-    //   j++;
-    // }
+    // Count boundary neighbors in this cell
+    j = cell_start_boundary[cellID];
+    while (j < cell_start_boundary[cellID + 1]) {
+      const float3 pos_j = pos_boundary[j];
+      const float dis = length(pos - pos_j);
+      if (dis < max_dist) {
+        neighbor_count++;
+        if (neighbor_count >= 2) {
+          return false; // Too many neighbors
+        }
+      }
+      j++;
+    }
   }
 
   return found_empty; // Must have found an empty cell and have fewer than 5
@@ -1312,7 +1312,7 @@ __global__ void update_upsampled_cuda(
   new_vel += boundary_repulsion;
 
   // Clamp velocities to prevent extreme values
-  const float max_velocity = 10.0f; // Adjust as needed
+  const float max_velocity = 5.0f; // Adjust as needed
   new_vel.x = clamp(new_vel.x, -max_velocity, max_velocity);
   new_vel.y = clamp(new_vel.y, -max_velocity, max_velocity);
   new_vel.z = clamp(new_vel.z, -max_velocity, max_velocity);
