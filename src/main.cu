@@ -41,7 +41,7 @@ static const float upsampled_particle_radius = 0.005f; // Half
 static GLuint m_particles_program;
 static const int m_window_h = 1600;
 static const int m_fov = 30;
-static const float particle_radius = 0.01f;
+static const float particle_radius = 0.01;
 float density = 238732.4146f;
 static size_t last_particle_count = 0;
 int scene = 0;
@@ -194,7 +194,8 @@ void saveFunnelUpsampledPositionsToVTK(
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
   // Create base directory based on adaptive setting
-  std::string base_dir = save_file + (is_adaptive ? "_adaptive" : "_normal");
+  std::string base_dir =
+      save_file + (is_adaptive ? "_adaptive" : "_normal") + "_3";
 
   // Create directories if they don't exist
   std::filesystem::create_directories(base_dir);
@@ -391,7 +392,7 @@ void saveFunnelBoundaryParticlesToVTK(
     const std::shared_ptr<GranularParticles> &boundary_particles,
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
-  std::string base_dir = save_file + "_boundary_adaptive";
+  std::string base_dir = save_file + "_boundary_base_2";
   std::filesystem::create_directories(base_dir);
   std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
 
@@ -633,7 +634,8 @@ void saveUpsampledPositionsToVTK(
     int frameId) {
 
   // Create base directory based on adaptive setting
-  std::string base_dir = save_file + (is_adaptive ? "_adaptive" : "_normal");
+  std::string base_dir =
+      save_file + (is_adaptive ? "_adaptive" : "_normal") + "_2";
 
   // Create directories if they don't exist
   std::filesystem::create_directories(base_dir);
@@ -759,6 +761,54 @@ void saveUpsampledPositionsToCSV(
 
 void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
+
+  // Function to initialize particles in a sphere
+  auto init_sphere = [](float radius, float init_spacing) {
+    std::vector<float3> sphere_positions;
+
+    // Calculate approximate number of particles needed based on sphere volume
+    // and spacing
+    float sphere_volume = (4.0f / 3.0f) * M_PI * radius * radius * radius;
+    float particle_volume = init_spacing * init_spacing * init_spacing;
+    int estimated_particles = static_cast<int>(sphere_volume / particle_volume);
+
+    // Random number generation
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dist(-radius, radius);
+
+    // Keep generating points until we have enough valid particles
+    while (sphere_positions.size() < estimated_particles) {
+      float3 candidate = make_float3(dist(gen), dist(gen), dist(gen));
+      float distance_from_center =
+          sqrtf(candidate.x * candidate.x + candidate.y * candidate.y +
+                candidate.z * candidate.z);
+
+      // Check if point is inside sphere
+      if (distance_from_center <= radius) {
+        // Check spacing with existing particles
+        bool valid_position = true;
+        for (const auto &existing : sphere_positions) {
+          float dx = candidate.x - existing.x;
+          float dy = candidate.y - existing.y;
+          float dz = candidate.z - existing.z;
+          float distance = sqrtf(dx * dx + dy * dy + dz * dz);
+
+          if (distance < init_spacing) {
+            valid_position = false;
+            break;
+          }
+        }
+
+        if (valid_position) {
+          sphere_positions.push_back(candidate);
+        }
+      }
+    }
+
+    return sphere_positions;
+  };
+
   std::vector<float3> pos;
   // 36 24 24
   for (auto i = 0; i < box_size.x; ++i) {
@@ -771,6 +821,47 @@ void init_granular_system() {
       }
     }
   }
+
+  // // Calculate particle volume based on density (mass = 1.0)
+  // float particle_volume = 1.0f / density;
+  // // Calculate particle diameter assuming spherical particles
+  // float particle_diameter = powf(6.0f * particle_volume / M_PI, 1.0f / 3.0f);
+
+  // // Calculate number of particles in each dimension
+  // int num_particles_x =
+  //     static_cast<int>(box_size.x / (particle_diameter + initSpacing));
+  // int num_particles_y =
+  //     static_cast<int>(box_size.y / (particle_diameter + initSpacing));
+  // int num_particles_z =
+  //     static_cast<int>(box_size.z / (particle_diameter + initSpacing));
+
+  // // Calculate actual spacing to evenly distribute particles
+  // float actual_spacing_x = box_size.x / num_particles_x;
+  // float actual_spacing_y = box_size.y / num_particles_y;
+  // float actual_spacing_z = box_size.z / num_particles_z;
+
+  // // Calculate offset to center particles in the box
+  // float offset_x =
+  //     (box_size.x - (num_particles_x - 1) * actual_spacing_x) / 2.0f;
+  // float offset_y =
+  //     (box_size.y - (num_particles_y - 1) * actual_spacing_y) / 2.0f;
+  // float offset_z =
+  //     (box_size.z - (num_particles_z - 1) * actual_spacing_z) / 2.0f;
+
+  // // Generate particles
+  // for (int i = 0; i < num_particles_x; ++i) {
+  //   for (int j = 0; j < num_particles_y; ++j) {
+  //     for (int k = 0; k < num_particles_z; ++k) {
+  //       float3 position = make_float3(offset_x + i * actual_spacing_x,
+  //                                     offset_y + j * actual_spacing_y,
+  //                                     offset_z + k * actual_spacing_z) +
+  //                         particle_translation;
+
+  //       pos.push_back(position);
+  //     }
+  //   }
+  // }
+
   auto granular_particles = std::make_shared<GranularParticles>(pos);
 
   std::vector<float3> upsampled_pos;
@@ -779,7 +870,7 @@ void init_granular_system() {
                                                      particle_radius);
 
   for (const auto &particle : pos) {
-    for (int n = 0; n < 10; ++n) {
+    for (int n = 0; n < 15; ++n) {
       float3 offset =
           make_float3(distribution(generator), distribution(generator),
                       distribution(generator));
@@ -1643,7 +1734,13 @@ void renderBoundaryCorners() {
 }
 
 void one_step() {
-  // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  if (frameId > 1546) {
+    // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+
+    saveFunnelUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+    // saveFunnelBoundaryParticlesToVTK(p_system->get_boundaries(),
+    //                                  p_system->get_upsampled(), frameId);
+  }
   // saveFunnelUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
   // saveFunnelBoundaryParticlesToVTK(p_system->get_boundaries(),
   //                                  p_system->get_upsampled(), frameId);
@@ -1698,7 +1795,7 @@ void initGL(void) {
 
 static void displayFunc(void) {
   if (running) {
-    // updateAnimation(dt);
+    updateAnimation(dt);
     one_step();
   }
 
@@ -1814,7 +1911,7 @@ static void displayFunc(void) {
 
   glPushMatrix();
   glTranslatef(-0.5f, -0.5f, -0.5f);
-  renderParticles();
+  // renderParticles();
 
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
@@ -1894,7 +1991,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box_opening_no.json");
+      config = loadSceneConfig("scenes/excavator.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

@@ -278,6 +278,7 @@ __device__ void boundary_constraint(float3 &del_p, int &n, const int i,
                               pos_p.z - pos_b[j].z);
 
     const float r_i = max(cbrtf((3 * m[i]) / (4 * pi * density)), 0.01f);
+    // const float r_i = max(cbrtf((3 * m[i]) / (4 * pi * density)), 0.01f);
     const float mag = dis - (0.01 + r_i);
     const float3 p_12 = pos_p - pos_b[j];
 
@@ -1244,8 +1245,8 @@ __global__ void update_upsampled_cuda(
   const float d_t = 0.002f;
 
   // Boundary repulsion parameters
-  const float boundary_radius = 0.02f;
-  const float repulsion_strength = 5.0f;
+  const float boundary_radius = 0.012f;
+  const float repulsion_strength = 0.5f;
   float3 boundary_repulsion = make_float3(0.0f, 0.0f, 0.0f);
 
 #pragma unroll
@@ -1312,7 +1313,7 @@ __global__ void update_upsampled_cuda(
   new_vel += boundary_repulsion;
 
   // Clamp velocities to prevent extreme values
-  const float max_velocity = 5.0f; // Adjust as needed
+  const float max_velocity = 7.0f; // Adjust as needed
   new_vel.x = clamp(new_vel.x, -max_velocity, max_velocity);
   new_vel.y = clamp(new_vel.y, -max_velocity, max_velocity);
   new_vel.z = clamp(new_vel.z, -max_velocity, max_velocity);
@@ -1332,18 +1333,18 @@ __global__ void update_upsampled_cuda(
     vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
   }
 
-  // if (pos_upsampled[i].x > 1.95) {
-  //   pos_upsampled[i].x = 1.95;
-  // }
-  // if (pos_upsampled[i].x < 0.05) {
-  //   pos_upsampled[i].x = 0.05;
-  // }
-  // if (pos_upsampled[i].z > 1.75) {
-  //   pos_upsampled[i].z = 1.75;
-  // }
-  // if (pos_upsampled[i].z < 0.05) {
-  //   pos_upsampled[i].z = 0.05;
-  // }
+  if (pos_upsampled[i].x > 1.95) {
+    pos_upsampled[i].x = 1.95;
+  }
+  if (pos_upsampled[i].x < 0.05) {
+    pos_upsampled[i].x = 0.05;
+  }
+  if (pos_upsampled[i].z > 1.75) {
+    pos_upsampled[i].z = 1.75;
+  }
+  if (pos_upsampled[i].z < 0.05) {
+    pos_upsampled[i].z = 0.05;
+  }
 
   return;
 }

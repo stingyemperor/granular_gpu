@@ -11,14 +11,14 @@
     "z": 0.0
   },
   "sph_spacing": 0.02,
-  "init_spacing": 0.061,
+  "init_spacing": 0.01,
   "smoothing_radius": 0.04,
   "cell_length": 0.0404,
-  "density": 51566.2,
+  "density": 238732.4146,
   "box_size": {
-    "x": 26,
-    "y": 26,
-    "z": 26
+    "x": 1.5,
+    "y": 1.5,
+    "z": 1.5
   },
   "scene": 1,
   "boundary_translation": {
@@ -27,12 +27,12 @@
     "z": 0.0
   },
   "particle_translation": {
-    "x": -0.05,
-    "y": 0.0,
-    "z": 0.0
+    "x": 0.1,
+    "y": 0.1,
+    "z": 0.1
   },
   "obj_file": "",
   "is_adaptive": 1,
   "save_boundary": false,
-  "save_file": "/home/samraatg/MEGA/cgi_2025_data/box"
+  "save_file": "/home/samraatg/Documents/cgi_backup/box_opening_up"
 }
