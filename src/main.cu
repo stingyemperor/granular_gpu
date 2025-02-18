@@ -779,7 +779,7 @@ void init_granular_system() {
                                                      particle_radius);
 
   for (const auto &particle : pos) {
-    for (int n = 0; n < 15; ++n) {
+    for (int n = 0; n < 10; ++n) {
       float3 offset =
           make_float3(distribution(generator), distribution(generator),
                       distribution(generator));
@@ -1894,7 +1894,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig("scenes/box_opening_no.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

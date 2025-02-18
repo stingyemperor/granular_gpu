@@ -1,0 +1,38 @@
+{
+  "space_size": {
+    "x": 2.0,
+    "y": 1.8,
+    "z": 1.8
+  },
+  "dt": 0.002,
+  "gravity": {
+    "x": 0.0,
+    "y": -9.8,
+    "z": 0.0
+  },
+  "sph_spacing": 0.02,
+  "init_spacing": 0.015,
+  "smoothing_radius": 0.04,
+  "cell_length": 0.0404,
+  "density": 515662.0,
+  "box_size": {
+    "x": 100,
+    "y": 100,
+    "z": 100
+  },
+  "scene": 1,
+  "boundary_translation": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "particle_translation": {
+    "x": -0.05,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "obj_file": "",
+  "is_adaptive": 0,
+  "save_boundary": false,
+  "save_file": "/home/samraatg/MEGA/cgi_2025_data/box"
+}
