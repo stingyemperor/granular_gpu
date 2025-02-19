@@ -32,7 +32,7 @@
     "z": 0.1
   },
   "obj_file": "",
-  "is_adaptive": 1,
+  "is_adaptive": 0,
   "save_boundary": false,
   "save_file": "/home/samraatg/Documents/cgi_backup/box"
 }

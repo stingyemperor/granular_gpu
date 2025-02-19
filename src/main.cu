@@ -194,8 +194,7 @@ void saveFunnelUpsampledPositionsToVTK(
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
   // Create base directory based on adaptive setting
-  std::string base_dir =
-      save_file + (is_adaptive ? "_adaptive" : "_normal") + "_3";
+  std::string base_dir = save_file + (is_adaptive ? "_adaptive" : "_normal");
 
   // Create directories if they don't exist
   std::filesystem::create_directories(base_dir);
@@ -392,7 +391,7 @@ void saveFunnelBoundaryParticlesToVTK(
     const std::shared_ptr<GranularParticles> &boundary_particles,
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
-  std::string base_dir = save_file + "_boundary_base_2";
+  std::string base_dir = save_file;
   std::filesystem::create_directories(base_dir);
   std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
 
@@ -801,57 +800,56 @@ void init_granular_system() {
   std::vector<float3> pos;
   // pos = generateSphericalParticles(1, initSpacing);
   // 36 24 24
-  // for (auto i = 0; i < box_size.x; ++i) {
-  //   for (auto j = 0; j < box_size.y; ++j) {
-  //     for (auto k = 0; k < box_size.z; ++k) {
-  //       auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing *
-  //       i,
-  //                            0.17f + initSpacing * k) +
-  //                particle_translation;
-  //       pos.push_back(x);
-  //     }
-  //   }
-  // }
-
-  // Calculate particle volume based on density (mass = 1.0)
-  float particle_volume = 1.0f / density;
-  // Calculate particle diameter assuming spherical particles
-  float particle_diameter = powf(6.0f * particle_volume / M_PI, 1.0f / 3.0f);
-
-  // Calculate number of particles in each dimension
-  int num_particles_x =
-      static_cast<int>(box_size.x / (particle_diameter + initSpacing));
-  int num_particles_y =
-      static_cast<int>(box_size.y / (particle_diameter + initSpacing));
-  int num_particles_z =
-      static_cast<int>(box_size.z / (particle_diameter + initSpacing));
-
-  // Calculate actual spacing to evenly distribute particles
-  float actual_spacing_x = box_size.x / num_particles_x;
-  float actual_spacing_y = box_size.y / num_particles_y;
-  float actual_spacing_z = box_size.z / num_particles_z;
-
-  // Calculate offset to center particles in the box
-  float offset_x =
-      (box_size.x - (num_particles_x - 1) * actual_spacing_x) / 2.0f;
-  float offset_y =
-      (box_size.y - (num_particles_y - 1) * actual_spacing_y) / 2.0f;
-  float offset_z =
-      (box_size.z - (num_particles_z - 1) * actual_spacing_z) / 2.0f;
-
-  // Generate particles
-  for (int i = 0; i < num_particles_x; ++i) {
-    for (int j = 0; j < num_particles_y; ++j) {
-      for (int k = 0; k < num_particles_z; ++k) {
-        float3 position = make_float3(offset_x + i * actual_spacing_x,
-                                      offset_y + j * actual_spacing_y,
-                                      offset_z + k * actual_spacing_z) +
-                          particle_translation;
-
-        pos.push_back(position);
+  for (auto i = 0; i < box_size.x; ++i) {
+    for (auto j = 0; j < box_size.y; ++j) {
+      for (auto k = 0; k < box_size.z; ++k) {
+        auto x = make_float3(0.27f + initSpacing * j, 0.13f + initSpacing * i,
+                             0.17f + initSpacing * k) +
+                 particle_translation;
+        pos.push_back(x);
       }
     }
   }
+
+  // // Calculate particle volume based on density (mass = 1.0)
+  // float particle_volume = 1.0f / density;
+  // // Calculate particle diameter assuming spherical particles
+  // float particle_diameter = powf(6.0f * particle_volume / M_PI, 1.0f / 3.0f);
+
+  // // Calculate number of particles in each dimension
+  // int num_particles_x =
+  //     static_cast<int>(box_size.x / (particle_diameter + initSpacing));
+  // int num_particles_y =
+  //     static_cast<int>(box_size.y / (particle_diameter + initSpacing));
+  // int num_particles_z =
+  //     static_cast<int>(box_size.z / (particle_diameter + initSpacing));
+
+  // // Calculate actual spacing to evenly distribute particles
+  // float actual_spacing_x = box_size.x / num_particles_x;
+  // float actual_spacing_y = box_size.y / num_particles_y;
+  // float actual_spacing_z = box_size.z / num_particles_z;
+
+  // // Calculate offset to center particles in the box
+  // float offset_x =
+  //     (box_size.x - (num_particles_x - 1) * actual_spacing_x) / 2.0f;
+  // float offset_y =
+  //     (box_size.y - (num_particles_y - 1) * actual_spacing_y) / 2.0f;
+  // float offset_z =
+  //     (box_size.z - (num_particles_z - 1) * actual_spacing_z) / 2.0f;
+
+  // // Generate particles
+  // for (int i = 0; i < num_particles_x; ++i) {
+  //   for (int j = 0; j < num_particles_y; ++j) {
+  //     for (int k = 0; k < num_particles_z; ++k) {
+  //       float3 position = make_float3(offset_x + i * actual_spacing_x,
+  //                                     offset_y + j * actual_spacing_y,
+  //                                     offset_z + k * actual_spacing_z) +
+  //                         particle_translation;
+
+  //       pos.push_back(position);
+  //     }
+  //   }
+  // }
 
   auto granular_particles = std::make_shared<GranularParticles>(pos);
 
@@ -1121,7 +1119,7 @@ void init_granular_system() {
 
           // Translate back and apply any additional translation
           p = make_float3(centered.x, new_y, new_z) + centroid +
-              make_float3(1.25f, 0.3f, 1.0f);
+              make_float3(1.25f, 0.3f, 1.5f);
         }
 
         stored_additional_particles = additional_particles;
@@ -1725,12 +1723,11 @@ void renderBoundaryCorners() {
 }
 
 void one_step() {
-  // if (frameId > 1546) {
-  //   // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
-
-  //   saveFunnelUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
-  //   // saveFunnelBoundaryParticlesToVTK(p_system->get_boundaries(),
-  //   //                                  p_system->get_upsampled(), frameId);
+  // if (frameId > 1400) {
+  // saveUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  // saveFunnelUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
+  // saveFunnelBoundaryParticlesToVTK(p_system->get_boundaries(),
+  //                                  p_system->get_upsampled(), frameId);
   // }
   // saveFunnelUpsampledPositionsToVTK(p_system->get_upsampled(), frameId);
   // saveFunnelBoundaryParticlesToVTK(p_system->get_boundaries(),
@@ -1786,7 +1783,7 @@ void initGL(void) {
 
 static void displayFunc(void) {
   if (running) {
-    updateAnimation(dt);
+    // updateAnimation(dt);
     one_step();
   }
 
@@ -1982,7 +1979,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/piling.json");
+      config = loadSceneConfig("scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

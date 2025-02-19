@@ -31,7 +31,7 @@ __device__ __constant__ float target_density = 100.0f; // For water-like density
 #define EPSILON_m 1e-4f // Small threshold for comparison
 
 int t_merge_iter = 0;
-int t_split_iter = 0;
+int t_iter_iter = 0;
 
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
@@ -201,7 +201,7 @@ struct final_velocity_functor {
         min_speed(1.0f),    // Adjust these thresholds based on your simulation
         max_speed(10.0f),   // Adjust these thresholds based on your simulation
         min_damping(0.99f), // Almost no damping for slow particles
-        max_damping(0.70f)  // Stronger damping for fast particles
+        max_damping(0.99f)  // Stronger damping for fast particles
   {}
 
   __host__ __device__ float3
@@ -377,9 +377,9 @@ __global__ void compute_delta_pos(float3 *delta_pos, int *n,
 
 #pragma unroll
   // Loop through the 27 neighboring cells
-  for (auto m = 0; m < 27; ++m) {
+  for (auto m = 0; m < 27; __syncthreads(), ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(floorf(pos_granular[i] / cell_length)) +
+        make_int3(pos_granular[i] / cell_length) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
@@ -553,9 +553,9 @@ merge_mark_gpu(const int num, float3 *pos_granular, float *mass_granular,
   int local_count = 0;
 
 #pragma unroll
-  for (auto m = 0; m < 27; ++m) {
+  for (auto m = 0; m < 27; __syncthreads(), ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(floorf(pos_i / cell_length)) +
+        make_int3(pos_i / cell_length) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
 
@@ -718,7 +718,7 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
   // Loop through the 27 neighboring cells
   for (int m = 0; m < 27; m++) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(floorf(pos / cell_length)) +
+        make_int3(pos / cell_length) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
 
@@ -732,7 +732,7 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
       if (cell_start_granular[cellID] == cell_start_granular[cellID + 1] &&
           cell_start_boundary[cellID] == cell_start_boundary[cellID + 1]) {
         // Calculate cell center position
-        int3 cell_pos = make_int3(floorf(pos / cell_length)) +
+        int3 cell_pos = make_int3(pos / cell_length) +
                         make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1);
         empty_cell_center = make_float3((cell_pos.x + 0.5f) * (cell_length),
                                         (cell_pos.y + 0.5f) * (cell_length),
@@ -903,7 +903,7 @@ void Solver::adaptive_sampling(
     //     thrust::device_pointer_cast(_buffer_merge_lock.addr() + num), 0);
 
     // Run merge kernel
-    if (t_merge_iter == 60) {
+    if (t_merge_iter == 1) {
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),
@@ -974,21 +974,14 @@ void Solver::adaptive_sampling(
                          cudaMemcpyHostToDevice));
     // TODO: fix the split kernel
     // Run split kernel
-    //
-    if (t_split_iter > 60) {
-      split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-          num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-          particles->get_vel_ptr(), boundaries->get_pos_ptr(),
-          particles->get_surface_ptr(), _buffer_remove.addr(),
-          _buffer_merge.addr(), cell_start_granular.addr(),
-          cell_start_boundary.addr(), max_mass, cell_size,
-          split_particles.addr(), d_split_count, density, cell_length,
-          particles->get_adaptive_last_step_ptr());
-
-      t_split_iter = 0;
-    }
-
-    t_split_iter++;
+    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+        particles->get_vel_ptr(), boundaries->get_pos_ptr(),
+        particles->get_surface_ptr(), _buffer_remove.addr(),
+        _buffer_merge.addr(), cell_start_granular.addr(),
+        cell_start_boundary.addr(), max_mass, cell_size, split_particles.addr(),
+        d_split_count, density, cell_length,
+        particles->get_adaptive_last_step_ptr());
 
     // // Print final state before removal
     // std::cout << "\nFinal state before removal:\n";
@@ -1251,10 +1244,11 @@ __global__ void update_upsampled_cuda(
   const float3 g_t = make_float3(0.0f, -9.8f, 0.0f);
   const float d_t = 0.002f;
 
-  // Boundary repulsion parameters
-  const float boundary_radius = 0.02f;
-  const float repulsion_strength = 5.0f;
+  // Boundary parameters
+  const float boundary_radius = 0.015f;
+  const float repulsion_strength = 3.0f;
   float3 boundary_repulsion = make_float3(0.0f, 0.0f, 0.0f);
+  bool near_boundary = false;
 
 #pragma unroll
   for (auto m = 0; m < 27; ++m) {
@@ -1271,7 +1265,6 @@ __global__ void update_upsampled_cuda(
     while (j < cell_start_granular[cellID + 1]) {
       const float dis = length(pos_i - pos_granular[j]);
       const float t_1 = 1 - (dis * dis * r_9);
-
       const float w_ij = max(0.0f, t_1 * t_1 * t_1);
       granular_weight += w_ij;
       weighted_vel += w_ij * vel_granular[j];
@@ -1285,75 +1278,79 @@ __global__ void update_upsampled_cuda(
       const float3 to_boundary = pos_i - pos_boundary[k];
       const float dis = length(to_boundary);
 
-      // Add repulsion force when too close to boundary
       if (dis < boundary_radius) {
+        near_boundary = true;
         float3 normal = to_boundary / (dis + 1e-6f);
         float force =
             repulsion_strength * (boundary_radius - dis) / boundary_radius;
         boundary_repulsion += normal * force;
       }
 
-      // Calculate boundary influence
       const float t_1 = 1 - (dis * dis * r_9);
       const float w_ij = max(0.0f, t_1 * t_1 * t_1);
       boundary_weight += w_ij;
-
       k++;
     }
   }
 
-  // Update velocity and position
+  // Update velocity
   float3 new_vel;
   if (granular_weight > 1e-6f) {
-    // If there are nearby granular particles, use their influence
+    // If there are nearby granular particles
     weighted_vel /= granular_weight;
     float alpha = max(0.0f, 1.0f - max_w_ij);
     new_vel =
         alpha * (vel_upsampled[i] + g_t * d_t) + (1.0f - alpha) * weighted_vel;
   } else {
-    // If no granular particles nearby, use current velocity with boundary
-    // repulsion
+    // If only boundary particles are nearby
     new_vel = vel_upsampled[i] + g_t * d_t;
+
+    // Apply strong damping when near boundary
+    if (near_boundary) {
+      const float damping = 0.8f; // Increased damping factor
+      new_vel *= damping;
+
+      // Additional vertical damping when near boundary
+      if (pos_i.y < 0.1f) {
+        new_vel.y *= 0.5f; // Extra damping for vertical motion near ground
+      }
+    }
   }
 
-  // Add boundary repulsion to velocity
+  // Add boundary repulsion
   new_vel += boundary_repulsion;
 
-  // Clamp velocities to prevent extreme values
-  const float max_velocity = 7.0f; // Adjust as needed
+  // Velocity clamping
+  const float max_velocity = 7.0f;
   new_vel.x = clamp(new_vel.x, -max_velocity, max_velocity);
   new_vel.y = clamp(new_vel.y, -max_velocity, max_velocity);
   new_vel.z = clamp(new_vel.z, -max_velocity, max_velocity);
 
-  // Check for NaN values
+  // Handle NaN values
   if (isnan(new_vel.x) || isnan(new_vel.y) || isnan(new_vel.z)) {
     new_vel = make_float3(0.0f, 0.0f, 0.0f);
   }
 
   // Update velocity and position
   vel_upsampled[i] = new_vel;
-  pos_upsampled[i] = pos_upsampled[i] + new_vel * d_t;
+  pos_upsampled[i] += new_vel * d_t;
 
-  // Boundary constraints
-  if (pos_upsampled[i].y < 0.005f) {
-    pos_upsampled[i].y = 0.005f;
-    vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
+  // Boundary constraints with damping
+  if (pos_upsampled[i].y < 0.04f) {
+    pos_upsampled[i].y = 0.04f;
+    vel_upsampled[i].y = 0.0f;   // Stop vertical motion at boundary
+    vel_upsampled[i].x *= 0.95f; // Add horizontal friction
+    vel_upsampled[i].z *= 0.95f;
+  }
+  if (pos_upsampled[i].x < 0.0f) {
+    pos_upsampled[i].x = 0.0f;
+    vel_upsampled[i].x = 0.0f; // Stop horizontal motion at boundary
   }
 
-  // if (pos_upsampled[i].x > 1.95) {
-  //   pos_upsampled[i].x = 1.95;
-  // }
-  // if (pos_upsampled[i].x < 0.05) {
-  //   pos_upsampled[i].x = 0.05;
-  // }
-  // if (pos_upsampled[i].z > 1.75) {
-  //   pos_upsampled[i].z = 1.75;
-  // }
-  // if (pos_upsampled[i].z < 0.05) {
-  //   pos_upsampled[i].z = 0.05;
-  // }
-
-  return;
+  if (pos_upsampled[i].z < 0.0f) {
+    pos_upsampled[i].z = 0.0f;
+    vel_upsampled[i].z = 0.0f; // Stop horizontal motion at boundary
+  }
 }
 
 void Solver::upsampled_update(
