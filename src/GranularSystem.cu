@@ -471,9 +471,9 @@ __global__ void find_num_surface_neighbors(
   __syncthreads();
 
   const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI_d * density));
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_granular[i] / cell_length) +
+        make_int3(floorf(pos_granular[i] / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
@@ -517,9 +517,9 @@ __global__ void find_cover_vector(float3 *buffer_cover_vector,
   float3 c_v = make_float3(0.0f, 0.0f, 0.0f);
   const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI_d * density));
 
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_granular[i] / cell_length) +
+        make_int3(floorf(pos_granular[i] / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
@@ -569,9 +569,9 @@ __global__ void find_surface(int *buffer_boundary, float3 *buffer_cover_vector,
   bool boundary_vote = false;
   const float r_i = cbrtf((3 * mass_granular[i]) / (4 * PI_d * density));
 
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_granular[i] / cell_length) +
+        make_int3(floorf(pos_granular[i] / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
@@ -654,9 +654,9 @@ compute_distance_to_surface(const int num, const float3 *pos_particles,
   float best_dist2 = FLT_MAX;
 
   // Loop through 27 neighboring cells using the same pattern as other functions
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_particles[i] / cell_length) +
+        make_int3(floorf(pos_particles[i] / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
 

@@ -31,7 +31,7 @@ __device__ __constant__ float target_density = 100.0f; // For water-like density
 #define EPSILON_m 1e-4f // Small threshold for comparison
 
 int t_merge_iter = 0;
-int t_iter_iter = 0;
+int t_split_iter = 0;
 
 void print_darray_int(const DArray<int> &_num_constraints) {
   // Step 1: Allocate host memory
@@ -201,7 +201,7 @@ struct final_velocity_functor {
         min_speed(1.0f),    // Adjust these thresholds based on your simulation
         max_speed(10.0f),   // Adjust these thresholds based on your simulation
         min_damping(0.99f), // Almost no damping for slow particles
-        max_damping(0.99f)  // Stronger damping for fast particles
+        max_damping(0.70f)  // Stronger damping for fast particles
   {}
 
   __host__ __device__ float3
@@ -377,9 +377,9 @@ __global__ void compute_delta_pos(float3 *delta_pos, int *n,
 
 #pragma unroll
   // Loop through the 27 neighboring cells
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_granular[i] / cell_length) +
+        make_int3(floorf(pos_granular[i] / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
     if (cellID == (cell_size.x * cell_size.y * cell_size.z))
@@ -553,9 +553,9 @@ merge_mark_gpu(const int num, float3 *pos_granular, float *mass_granular,
   int local_count = 0;
 
 #pragma unroll
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_i / cell_length) +
+        make_int3(floorf(pos_i / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
 
@@ -718,7 +718,7 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
   // Loop through the 27 neighboring cells
   for (int m = 0; m < 27; m++) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos / cell_length) +
+        make_int3(floorf(pos / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
 
@@ -732,7 +732,7 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
       if (cell_start_granular[cellID] == cell_start_granular[cellID + 1] &&
           cell_start_boundary[cellID] == cell_start_boundary[cellID + 1]) {
         // Calculate cell center position
-        int3 cell_pos = make_int3(pos / cell_length) +
+        int3 cell_pos = make_int3(floorf(pos / cell_length)) +
                         make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1);
         empty_cell_center = make_float3((cell_pos.x + 0.5f) * (cell_length),
                                         (cell_pos.y + 0.5f) * (cell_length),
@@ -903,7 +903,7 @@ void Solver::adaptive_sampling(
     //     thrust::device_pointer_cast(_buffer_merge_lock.addr() + num), 0);
 
     // Run merge kernel
-    if (t_merge_iter == 1) {
+    if (t_merge_iter == 60) {
       merge_mark_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
           num, particles->get_pos_ptr(), particles->get_mass_ptr(),
           particles->get_vel_ptr(), particles->get_surface_ptr(),
@@ -974,14 +974,21 @@ void Solver::adaptive_sampling(
                          cudaMemcpyHostToDevice));
     // TODO: fix the split kernel
     // Run split kernel
-    split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
-        num, particles->get_pos_ptr(), particles->get_mass_ptr(),
-        particles->get_vel_ptr(), boundaries->get_pos_ptr(),
-        particles->get_surface_ptr(), _buffer_remove.addr(),
-        _buffer_merge.addr(), cell_start_granular.addr(),
-        cell_start_boundary.addr(), max_mass, cell_size, split_particles.addr(),
-        d_split_count, density, cell_length,
-        particles->get_adaptive_last_step_ptr());
+    //
+    if (t_split_iter > 60) {
+      split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
+          num, particles->get_pos_ptr(), particles->get_mass_ptr(),
+          particles->get_vel_ptr(), boundaries->get_pos_ptr(),
+          particles->get_surface_ptr(), _buffer_remove.addr(),
+          _buffer_merge.addr(), cell_start_granular.addr(),
+          cell_start_boundary.addr(), max_mass, cell_size,
+          split_particles.addr(), d_split_count, density, cell_length,
+          particles->get_adaptive_last_step_ptr());
+
+      t_split_iter = 0;
+    }
+
+    t_split_iter++;
 
     // // Print final state before removal
     // std::cout << "\nFinal state before removal:\n";
@@ -1245,14 +1252,14 @@ __global__ void update_upsampled_cuda(
   const float d_t = 0.002f;
 
   // Boundary repulsion parameters
-  const float boundary_radius = 0.012f;
-  const float repulsion_strength = 0.5f;
+  const float boundary_radius = 0.02f;
+  const float repulsion_strength = 5.0f;
   float3 boundary_repulsion = make_float3(0.0f, 0.0f, 0.0f);
 
 #pragma unroll
-  for (auto m = 0; m < 27; __syncthreads(), ++m) {
+  for (auto m = 0; m < 27; ++m) {
     const auto cellID = particlePos2cellIdx(
-        make_int3(pos_i / cell_length) +
+        make_int3(floorf(pos_i / cell_length)) +
             make_int3(m / 9 - 1, (m % 9) / 3 - 1, m % 3 - 1),
         cell_size);
 
@@ -1333,18 +1340,18 @@ __global__ void update_upsampled_cuda(
     vel_upsampled[i].y = max(0.0f, vel_upsampled[i].y);
   }
 
-  if (pos_upsampled[i].x > 1.95) {
-    pos_upsampled[i].x = 1.95;
-  }
-  if (pos_upsampled[i].x < 0.05) {
-    pos_upsampled[i].x = 0.05;
-  }
-  if (pos_upsampled[i].z > 1.75) {
-    pos_upsampled[i].z = 1.75;
-  }
-  if (pos_upsampled[i].z < 0.05) {
-    pos_upsampled[i].z = 0.05;
-  }
+  // if (pos_upsampled[i].x > 1.95) {
+  //   pos_upsampled[i].x = 1.95;
+  // }
+  // if (pos_upsampled[i].x < 0.05) {
+  //   pos_upsampled[i].x = 0.05;
+  // }
+  // if (pos_upsampled[i].z > 1.75) {
+  //   pos_upsampled[i].z = 1.75;
+  // }
+  // if (pos_upsampled[i].z < 0.05) {
+  //   pos_upsampled[i].z = 0.05;
+  // }
 
   return;
 }

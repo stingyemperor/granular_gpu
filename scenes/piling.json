@@ -11,14 +11,14 @@
     "z": 0.0
   },
   "sph_spacing": 0.02,
-  "init_spacing": 0.03,
+  "init_spacing": 0.01,
   "smoothing_radius": 0.04,
   "cell_length": 0.0404,
   "density": 238732.4146,
   "box_size": {
-    "x": 20,
-    "y": 100,
-    "z": 50
+    "x": 1.5,
+    "y": 1.5,
+    "z": 1.5
   },
   "scene": 0,
   "boundary_translation": {
