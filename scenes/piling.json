@@ -28,7 +28,7 @@
   },
   "particle_translation": {
     "x": 5.0,
-    "y": 0.1,
+    "y": 0.05,
     "z": 5.0
   },
   "obj_file": "",

@@ -32,6 +32,6 @@
     "z": 0.5
   },
   "obj_file": "obj/funnel.txt",
-  "is_adaptive": 1,
+  "is_adaptive": 0,
   "save_file": "/home/samraatg/Documents/cgi_backup/funnel"
 }

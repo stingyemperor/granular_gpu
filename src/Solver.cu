@@ -765,7 +765,7 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
       const float dis = length(pos - pos_j);
       if (dis < max_dist) {
         neighbor_count++;
-        if (neighbor_count >= 2) {
+        if (neighbor_count >= 1) {
           return false; // Too many neighbors
         }
       }

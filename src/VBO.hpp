@@ -63,8 +63,9 @@ __global__ void generate_dots_CUDA(float3 *dot, float3 *pos_color, float3 *pos,
 
     pos_color[i] = (1.0f - norm_mass) * color_min + norm_mass * color_max;
 
-    if (mass[i] < 1) {
-      pos_color[i] = make_float3(0, 0, 0);
+    if (mass[i] == 0.0f) {
+      pos_color[i] = make_float3(6.0 / 255 / 0, 214.0 / 255.0, 160.0 / 255.0);
+      // pos_color[i] = make_float3(0, 0, 0);
     }
   }
 }

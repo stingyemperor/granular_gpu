@@ -31,6 +31,8 @@ std::vector<float3> stored_additional_particles;
 int is_adaptive = 1;
 std::string save_file;
 
+bool show_particles = true; // Default to showing particles
+
 using json = nlohmann::json;
 // vbo and GL variables
 static GLuint particlesVBO;
@@ -798,8 +800,8 @@ void init_granular_system() {
   // NOTE: Fill up the initial positions of the particles
 
   std::vector<float3> pos;
-  // pos = generateSphericalParticles(1, initSpacing);
-  // 36 24 24
+  // // pos = generateSphericalParticles(1, initSpacing);
+  // // 36 24 24
   for (auto i = 0; i < box_size.x; ++i) {
     for (auto j = 0; j < box_size.y; ++j) {
       for (auto k = 0; k < box_size.z; ++k) {
@@ -859,7 +861,7 @@ void init_granular_system() {
                                                      particle_radius);
 
   for (const auto &particle : pos) {
-    for (int n = 0; n < 15; ++n) {
+    for (int n = 0; n < 25; ++n) {
       float3 offset =
           make_float3(distribution(generator), distribution(generator),
                       distribution(generator));
@@ -958,9 +960,9 @@ void init_granular_system() {
         auto x = make_float3(i, 0, j + 1) /
                  make_float3(compact_size - make_int3(1)) * space_size;
         pos.push_back(0.99f * x + 0.005f * space_size);
-        x = make_float3(i, compact_size.y - 1, j + 1) /
-            make_float3(compact_size - make_int3(1)) * space_size;
-        pos.push_back(0.99f * x + 0.005f * space_size);
+        // x = make_float3(i, compact_size.y - 1, j + 1) /
+        //     make_float3(compact_size - make_int3(1)) * space_size;
+        // pos.push_back(0.99f * x + 0.005f * space_size);
       }
     }
     // left and right
@@ -1899,7 +1901,9 @@ static void displayFunc(void) {
 
   glPushMatrix();
   glTranslatef(-0.5f, -0.5f, -0.5f);
-  renderParticles();
+  if (show_particles) {
+    renderParticles();
+  }
 
   // Render upsampled particles
   glUniform1f(glGetUniformLocation(m_particles_program, "pointRadius"),
@@ -1944,6 +1948,11 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
     void one_step();
     one_step();
     break;
+
+  case 'p':
+  case 'P':
+    show_particles = !show_particles; // Toggle particle visibility
+    break;
   case 's':
   case 'S': {
     break;
@@ -1955,8 +1964,6 @@ void keyboardFunc(const unsigned char key, const int x, const int y) {
     p_system->get_solver().trigger_explosion(particles, 50.0f);
     break;
   }
-  default:
-    break;
   }
 }
 void reshape(int width, int height) {
@@ -1979,7 +1986,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig("scenes/funnel.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
