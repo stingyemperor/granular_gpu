@@ -1754,6 +1754,7 @@ void one_step() {
 
   ++frameId;
   p_system->step();
+  p_system->get_solver().save_particle_stats("stats.csv");
   // const auto milliseconds = p_system->step();
   // totalTime += milliseconds;
   // printf("Frame %d - %2.2f ms, avg time - %2.2f ms/frame (%3.2f FPS)\r",
@@ -1986,7 +1987,7 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/funnel.json");
+      config = loadSceneConfig("scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;

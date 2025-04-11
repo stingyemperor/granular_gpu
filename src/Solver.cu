@@ -10,6 +10,8 @@
 #include <cuda_runtime_api.h>
 #include <curand_kernel.h>
 #include <device_atomic_functions.h>
+#include <fstream>
+#include <ostream>
 #include <stdatomic.h>
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
@@ -19,6 +21,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
+#include <tuple>
 #include <unistd.h>
 #include <vector_types.h>
 
@@ -94,8 +97,6 @@ void Solver::step(std::shared_ptr<GranularParticles> &particles,
   // project constraints
   project(particles, boundary, cell_start_granular, cell_start_boundary,
           cell_size, space_size, cell_length, 5, density);
-
-  // TODO: resize remaning stuff
 
   final_update(particles, dt);
 
@@ -323,7 +324,6 @@ __device__ void particles_constraint(float3 &del_p, int &n, int i,
                   pos_p[i].z - pos_p[j].z);
       const float mag = (r_i + r_j) - dis;
 
-      // TODO: add mass scaling
       if (mag >= 0.0) {
         // del_p -= inv_m_sum * inv_m_i * (mag / dis) * p_12;
         // delta_pos[j] += inv_m_sum * inv_m_j * (mag / dis) * p_12;
@@ -766,7 +766,7 @@ check_neighborhood(float3 pos, float3 *pos_granular, float3 *pos_boundary,
       if (dis < max_dist) {
         neighbor_count++;
         if (neighbor_count >= 1) {
-          return false; // Too many neighbors
+          return false;
         }
       }
       j++;
@@ -860,10 +860,14 @@ void Solver::adaptive_sampling(
     const DArray<int> &cell_start_boundary, const float max_mass,
     int3 cell_size, float3 space_size, float cell_length, const float density) {
   const int num = particles->size();
-  if (num == 0)
+  if (num == 0) {
     return;
+  }
 
-  // Store initial state and particle IDs
+  // stuff to save number of particles merging and splitting
+  int initial_particle_count = num;
+  int particles_splitting = 0;
+
   // std::vector<float> initial_masses(num);
   // std::vector<float3> initial_positions(num);
   // std::vector<float3> initial_velocities(num);
@@ -946,7 +950,6 @@ void Solver::adaptive_sampling(
 
     // Run split kernel
 
-    // TODO: Velocity update
     // thrust::transform(thrust::device, particles->get_mass_ptr(),
     //                   particles->get_mass_ptr() + num,
     //                   _buffer_merge.addr(), particles->get_mass_ptr(),
@@ -972,7 +975,6 @@ void Solver::adaptive_sampling(
     CUDA_CALL(cudaMalloc(&d_split_count, sizeof(int)));
     CUDA_CALL(cudaMemcpy(d_split_count, &host_split_count, sizeof(int),
                          cudaMemcpyHostToDevice));
-    // TODO: fix the split kernel
     // Run split kernel
     split_gpu<<<(num + block_size - 1) / block_size, block_size>>>(
         num, particles->get_pos_ptr(), particles->get_mass_ptr(),
@@ -1030,6 +1032,14 @@ void Solver::adaptive_sampling(
     // }
 
     CUDA_CALL(cudaDeviceSynchronize());
+
+    // Count particles marked for removal before compacting
+    int particles_to_remove = 0;
+    thrust::device_ptr<int> d_remove_ptr =
+        thrust::device_pointer_cast(_buffer_remove.addr());
+    particles_to_remove =
+        thrust::count_if(d_remove_ptr, d_remove_ptr + num,
+                         [] __device__(int x) { return x == 1; });
 
     try {
       particles->remove_elements(_buffer_remove);
@@ -1149,10 +1159,11 @@ void Solver::adaptive_sampling(
     // add elements
 
     // Get number of splits
-    // TODO : check order of split
     CUDA_CALL(cudaMemcpy(&host_split_count, d_split_count, sizeof(int),
                          cudaMemcpyDeviceToHost));
     CUDA_CALL(cudaFree(d_split_count));
+
+    particles_splitting = host_split_count;
 
     if (host_split_count > 0) {
       // Prepare arrays for new particles
@@ -1219,6 +1230,10 @@ void Solver::adaptive_sampling(
     // if ((new_mass - old_mass) != 0) {
     //   std::cout << "Change in mass " << new_mass - old_mass << "\n";
     // }
+
+    int particles_after = particles->size();
+    _particle_stats.push_back(std::make_tuple(
+        particles_to_remove, particles_splitting, initial_particle_count));
 
   } catch (const std::exception &e) {
     std::cerr << "Error in adaptive_sampling: " << e.what() << std::endl;
@@ -1338,8 +1353,8 @@ __global__ void update_upsampled_cuda(
   // Boundary constraints with damping
   if (pos_upsampled[i].y < 0.04f) {
     pos_upsampled[i].y = 0.04f;
-    vel_upsampled[i].y = 0.0f;   // Stop vertical motion at boundary
-    vel_upsampled[i].x *= 0.95f; // Add horizontal friction
+    vel_upsampled[i].y = 0.0f; // Stop vertical motion at boundary
+    vel_upsampled[i].x *= 0.95f;
     vel_upsampled[i].z *= 0.95f;
   }
   if (pos_upsampled[i].x < 0.0f) {
@@ -1379,20 +1394,16 @@ __global__ void apply_explosion_force(float3 *pos, float3 *vel, float *mass,
   if (idx >= num_particles)
     return;
 
-  // Calculate direction from center of mass to particle
   float3 direction = pos[idx] - center_of_mass;
   float distance = length(direction);
 
   if (distance < EPSILON_m)
-    return; // Avoid division by zero
+    return;
 
-  // Normalize direction
   direction = direction / distance;
 
-  // Force decreases with square of distance
   float force_magnitude = explosion_force / (1.0f + distance * distance);
 
-  // Apply force as velocity change
   float3 velocity_change = direction * force_magnitude / mass[idx];
   vel[idx] += velocity_change;
 }
@@ -1428,4 +1439,24 @@ void Solver::trigger_explosion(std::shared_ptr<GranularParticles> &particles,
       particles->get_mass_ptr(), center_of_mass, explosion_force, num);
 
   cudaDeviceSynchronize();
+}
+
+void Solver::save_particle_stats(const std::string &filename) {
+  std::ofstream outfile(filename);
+  if (!outfile.is_open()) {
+    std::cerr << "Failed to open file for particle statistics: " << filename
+              << std::endl;
+    return;
+  }
+
+  outfile << "Frame,MergedParticles,SplitParticles,TotalParticles" << std::endl;
+
+  for (size_t i = 0; i < _particle_stats.size(); i++) {
+    const auto &stats = _particle_stats[i];
+    outfile << i << "," << std::get<0>(stats) << "," << std::get<1>(stats)
+            << "," << std::get<2>(stats) << std::endl;
+  }
+
+  outfile.close();
+  std::cout << "Particle statistics saved to " << filename << std::endl;
 }

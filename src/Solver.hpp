@@ -95,6 +95,8 @@ public:
   void trigger_explosion(std::shared_ptr<GranularParticles> &particles,
                          float explosion_force);
 
+  void save_particle_stats(const std::string &filename);
+
 private:
   const int _max_iter;
   const int _blend_factor;
@@ -108,5 +110,9 @@ private:
   DArray<float> _buffer_merge;
   DArray<float3> _buffer_merge_velocity;
   DArray<int> _buffer_merge_count;
-  DArray<int> _buffer_merge_lock; // Add this member
+  DArray<int> _buffer_merge_lock;
+  int _particles_merging;
+  int _particles_splitting;
+  std::vector<std::tuple<int, int, int>>
+      _particle_stats; // frame, merging, splitting, total
 };
