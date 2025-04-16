@@ -22,16 +22,16 @@
 // interactivity
 bool picking_mode = false;
 float3 pick_center = make_float3(0.0f, 0.0f, 0.0f);
-float pick_radius = 0.03f; // Radius of picking sphere
+float pick_radius = 0.03f;
 DArray<int> picked_particles(1);
-int num_picked = 0; // Keep track of number of picked particles
+int num_picked = 0;
 float3 last_pick_pos = make_float3(0.0f, 0.0f, 0.0f);
 std::string obj_file;
 std::vector<float3> stored_additional_particles;
 int is_adaptive = 1;
 std::string save_file;
 
-bool show_particles = true; // Default to showing particles
+bool show_particles = true;
 
 using json = nlohmann::json;
 // vbo and GL variables
@@ -39,7 +39,7 @@ static GLuint particlesVBO;
 static GLuint particlesColorVBO;
 static GLuint upsampledParticlesVBO;
 static GLuint upsampledParticlesColorVBO;
-static const float upsampled_particle_radius = 0.005f; // Half
+static const float upsampled_particle_radius = 0.005f;
 static GLuint m_particles_program;
 static const int m_window_h = 1600;
 static const int m_fov = 30;
@@ -102,12 +102,11 @@ struct AnimationState {
   float animation_time = 0.0f;
   int start_index = 0;
   int num_particles = 0;
-  float3 translation_direction =
-      make_float3(-0.1f, 0.0f, 0.0f); // Translation direction
+  float3 translation_direction = make_float3(-0.1f, 0.0f, 0.0f);
   float translation_speed = 5.0f;
   bool translation_complete = false;
   float rotation_angle = 0.0f;
-  float rotation_speed = 90.0f; // degrees per second
+  float rotation_speed = 90.0f;
   float3 rotation_center = make_float3(0.0f, 0.0f, 0.0f);
 };
 
@@ -132,13 +131,11 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
   json j;
   file >> j;
 
-  // Read space size
   config.space_size = make_float3(j["space_size"]["x"], j["space_size"]["y"],
                                   j["space_size"]["z"]);
 
   config.dt = j["dt"];
 
-  // Read gravity
   config.G =
       make_float3(j["gravity"]["x"], j["gravity"]["y"], j["gravity"]["z"]);
 
@@ -158,7 +155,6 @@ SceneConfig loadSceneConfig(const std::string &config_file) {
                                             j["particle_translation"]["y"],
                                             j["particle_translation"]["z"]);
 
-  // Calculate cell size based on space size and cell length
   config.cell_size = make_int3(ceil(config.space_size.x / config.cell_length),
                                ceil(config.space_size.y / config.cell_length),
                                ceil(config.space_size.z / config.cell_length));
@@ -185,7 +181,6 @@ std::vector<float3> readBoundaryParticlesFromFile(const std::string &filename,
     positions.push_back(make_float3(x, y, z));
   }
 
-  // Store the start index before adding new particles
   start_index = positions.size();
 
   file.close();
@@ -195,13 +190,10 @@ std::vector<float3> readBoundaryParticlesFromFile(const std::string &filename,
 void saveFunnelUpsampledPositionsToVTK(
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
-  // Create base directory based on adaptive setting
   std::string base_dir = save_file + (is_adaptive ? "_adaptive" : "_normal");
 
-  // Create directories if they don't exist
   std::filesystem::create_directories(base_dir);
 
-  // Create filename with frame number
   std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
 
   std::ofstream outFile(filename);
@@ -211,13 +203,11 @@ void saveFunnelUpsampledPositionsToVTK(
     return;
   }
 
-  // Get positions from device
   std::vector<float3> positions(upsampled_particles->size());
   CUDA_CALL(cudaMemcpy(positions.data(), upsampled_particles->get_pos_ptr(),
                        positions.size() * sizeof(float3),
                        cudaMemcpyDeviceToHost));
 
-  // Check for NaN values and count valid particles
   std::vector<float3> valid_positions;
   valid_positions.reserve(positions.size());
 
@@ -239,26 +229,22 @@ void saveFunnelUpsampledPositionsToVTK(
               << " particles with NaN values" << std::endl;
   }
 
-  // Write VTK header
   outFile << "# vtk DataFile Version 3.0\n";
   outFile << "Upsampled Granular Particles\n";
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points with original positions
   outFile << "POINTS " << valid_positions.size() << " float\n";
   for (const auto &pos : valid_positions) {
     outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
   }
 
-  // Write cells
   outFile << "CELLS " << valid_positions.size() << " "
           << valid_positions.size() * 2 << "\n";
   for (size_t i = 0; i < valid_positions.size(); i++) {
     outFile << "1 " << i << "\n";
   }
 
-  // Write cell types
   outFile << "CELL_TYPES " << valid_positions.size() << "\n";
   for (size_t i = 0; i < valid_positions.size(); i++) {
     outFile << "1\n";
@@ -270,7 +256,6 @@ void saveFunnelUpsampledPositionsToVTK(
 void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
                          int frameId) {
 
-  // Create base directories for each mass range
   std::string base_dir_light = save_file + "_mass_light";
   std::string base_dir_medium = save_file + "_mass_medium";
   std::string base_dir_heavy = save_file + "_mass_heavy";
@@ -279,7 +264,6 @@ void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
   std::filesystem::create_directories(base_dir_medium);
   std::filesystem::create_directories(base_dir_heavy);
 
-  // Get positions and masses from device
   std::vector<float3> positions(particles->size());
   std::vector<float> masses(particles->size());
 
@@ -290,12 +274,10 @@ void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
   CUDA_CALL(cudaMemcpy(masses.data(), particles->get_mass_ptr(),
                        masses.size() * sizeof(float), cudaMemcpyDeviceToHost));
 
-  // Separate particles by mass
   std::vector<float3> light_particles;
   std::vector<float3> medium_particles;
   std::vector<float3> heavy_particles;
 
-  // Calculate centroid for all valid particles first
   float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
   int valid_count = 0;
 
@@ -320,10 +302,8 @@ void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
     }
   }
 
-  // Calculate y offset to ensure all y values are positive
   float y_offset = min_y < 0.0f ? -min_y : 0.0f;
 
-  // Separate particles by mass
   for (size_t i = 0; i < positions.size(); i++) {
     if (!isnan(positions[i].x) && !isnan(positions[i].y) &&
         !isnan(positions[i].z)) {
@@ -341,7 +321,6 @@ void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
     }
   }
 
-  // Helper lambda to write particles to VTK file
   auto writeVTKFile = [](const std::string &filename,
                          const std::vector<float3> &particles) {
     std::ofstream outFile(filename);
@@ -374,7 +353,6 @@ void saveParticlesByMass(const std::shared_ptr<GranularParticles> &particles,
     outFile.close();
   };
 
-  // Save each group to its respective file
   if (!light_particles.empty()) {
     writeVTKFile(base_dir_light + "/" + std::to_string(frameId) + ".vtk",
                  light_particles);
@@ -403,7 +381,6 @@ void saveFunnelBoundaryParticlesToVTK(
     return;
   }
 
-  // Get positions from boundary particles
   std::vector<float3> boundary_positions(boundary_particles->size());
   std::vector<int> is_animated(boundary_particles->size());
 
@@ -415,7 +392,6 @@ void saveFunnelBoundaryParticlesToVTK(
       cudaMemcpy(is_animated.data(), boundary_particles->get_is_animated_ptr(),
                  is_animated.size() * sizeof(int), cudaMemcpyDeviceToHost));
 
-  // Filter animated boundary particles
   std::vector<float3> animated_positions;
   for (size_t i = 0; i < boundary_positions.size(); ++i) {
     if (is_animated[i] == 1) {
@@ -435,14 +411,12 @@ void saveFunnelBoundaryParticlesToVTK(
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points using original positions
   outFile << "POINTS " << animated_positions.size() << " float\n";
   for (const auto &pos : animated_positions) {
     // For FUNNEL scene, write coordinates directly without centering
     outFile << pos.x << " " << pos.z << " " << pos.y << "\n";
   }
 
-  // Write cells
   outFile << "CELLS " << animated_positions.size() << " "
           << animated_positions.size() * 2 << "\n";
   for (size_t i = 0; i < animated_positions.size(); i++) {
@@ -471,7 +445,6 @@ void saveBoundaryParticlesToVTK(
     return;
   }
 
-  // Get positions from both boundary and upsampled particles
   std::vector<float3> boundary_positions(boundary_particles->size());
   std::vector<int> is_animated(boundary_particles->size());
   std::vector<float3> upsampled_positions(upsampled_particles->size());
@@ -488,7 +461,6 @@ void saveBoundaryParticlesToVTK(
       upsampled_positions.data(), upsampled_particles->get_pos_ptr(),
       upsampled_positions.size() * sizeof(float3), cudaMemcpyDeviceToHost));
 
-  // Filter animated boundary particles
   std::vector<float3> animated_positions;
   for (size_t i = 0; i < boundary_positions.size(); ++i) {
     if (is_animated[i] == 1) {
@@ -502,8 +474,6 @@ void saveBoundaryParticlesToVTK(
     return;
   }
 
-  // Calculate centroid of upsampled particles (same as in
-  // saveUpsampledPositionsToVTK)
   std::vector<float3> valid_upsampled;
   for (const auto &pos : upsampled_positions) {
     if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
@@ -524,7 +494,6 @@ void saveBoundaryParticlesToVTK(
     min_y = fminf(min_y, centered_y);
   }
 
-  // Calculate y offset to ensure all y values are positive
   float y_offset = min_y < 0.0f ? -min_y : 0.0f;
 
   // Write VTK header
@@ -533,7 +502,6 @@ void saveBoundaryParticlesToVTK(
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points using the same centering as upsampled particles
   outFile << "POINTS " << animated_positions.size() << " float\n";
   for (const auto &pos : animated_positions) {
     float3 centered_pos = make_float3(
@@ -542,14 +510,12 @@ void saveBoundaryParticlesToVTK(
             << "\n";
   }
 
-  // Write cells
   outFile << "CELLS " << animated_positions.size() << " "
           << animated_positions.size() * 2 << "\n";
   for (size_t i = 0; i < animated_positions.size(); i++) {
     outFile << "1 " << i << "\n";
   }
 
-  // Write cell types
   outFile << "CELL_TYPES " << animated_positions.size() << "\n";
   for (size_t i = 0; i < animated_positions.size(); i++) {
     outFile << "1\n";
@@ -569,13 +535,11 @@ void saveAdditionalBoundaryParticlesToVTK(
     return;
   }
 
-  // First, get upsampled particle positions to calculate the same centroid
   std::vector<float3> upsampled_positions(p_system->get_upsampled()->size());
   CUDA_CALL(cudaMemcpy(
       upsampled_positions.data(), p_system->get_upsampled()->get_pos_ptr(),
       upsampled_positions.size() * sizeof(float3), cudaMemcpyDeviceToHost));
 
-  // Calculate centroid using valid upsampled particles
   std::vector<float3> valid_upsampled;
   for (const auto &pos : upsampled_positions) {
     if (!isnan(pos.x) && !isnan(pos.y) && !isnan(pos.z)) {
@@ -596,7 +560,6 @@ void saveAdditionalBoundaryParticlesToVTK(
     min_y = fminf(min_y, centered_y);
   }
 
-  // Calculate y offset to ensure all y values are positive
   float y_offset = min_y < 0.0f ? -min_y : 0.0f;
 
   // Write VTK header
@@ -605,7 +568,6 @@ void saveAdditionalBoundaryParticlesToVTK(
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points with the same centering as upsampled particles
   outFile << "POINTS " << original_additional_particles.size() << " float\n";
   for (const auto &pos : original_additional_particles) {
     float3 centered_pos = make_float3(
@@ -621,7 +583,6 @@ void saveAdditionalBoundaryParticlesToVTK(
     outFile << "1 " << i << "\n";
   }
 
-  // Write cell types
   outFile << "CELL_TYPES " << original_additional_particles.size() << "\n";
   for (size_t i = 0; i < original_additional_particles.size(); i++) {
     outFile << "1\n";
@@ -634,14 +595,11 @@ void saveUpsampledPositionsToVTK(
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
 
-  // Create base directory based on adaptive setting
   std::string base_dir =
       save_file + (is_adaptive ? "_adaptive" : "_normal") + "_2";
 
-  // Create directories if they don't exist
   std::filesystem::create_directories(base_dir);
 
-  // Create filename with frame number
   std::string filename = base_dir + "/" + std::to_string(frameId) + ".vtk";
 
   std::ofstream outFile(filename);
@@ -657,7 +615,6 @@ void saveUpsampledPositionsToVTK(
                        positions.size() * sizeof(float3),
                        cudaMemcpyDeviceToHost));
 
-  // Check for NaN values and count valid particles
   std::vector<float3> valid_positions;
   valid_positions.reserve(positions.size());
 
@@ -679,7 +636,6 @@ void saveUpsampledPositionsToVTK(
               << " particles with NaN values" << std::endl;
   }
 
-  // Calculate centroid using only valid positions
   float3 centroid = make_float3(0.0f, 0.0f, 0.0f);
   for (const auto &pos : valid_positions) {
     centroid += pos;
@@ -693,16 +649,13 @@ void saveUpsampledPositionsToVTK(
     min_y = fminf(min_y, centered_y);
   }
 
-  // Calculate y offset to ensure all y values are positive
   float y_offset = min_y < 0.0f ? -min_y : 0.0f;
 
-  // Write VTK header
   outFile << "# vtk DataFile Version 3.0\n";
   outFile << "Upsampled Granular Particles\n";
   outFile << "ASCII\n";
   outFile << "DATASET UNSTRUCTURED_GRID\n";
 
-  // Write points (centered around origin with positive y values)
   outFile << "POINTS " << valid_positions.size() << " float\n";
   for (const auto &pos : valid_positions) {
     float3 centered_pos = make_float3(
@@ -711,14 +664,12 @@ void saveUpsampledPositionsToVTK(
             << "\n";
   }
 
-  // Write cells
   outFile << "CELLS " << valid_positions.size() << " "
           << valid_positions.size() * 2 << "\n";
   for (size_t i = 0; i < valid_positions.size(); i++) {
     outFile << "1 " << i << "\n";
   }
 
-  // Write cell types
   outFile << "CELL_TYPES " << valid_positions.size() << "\n";
   for (size_t i = 0; i < valid_positions.size(); i++) {
     outFile << "1\n";
@@ -737,7 +688,6 @@ void saveFrameTimes(const std::vector<float> &frame_times) {
 void saveUpsampledPositionsToCSV(
     const std::shared_ptr<GranularParticles> &upsampled_particles,
     int frameId) {
-  // Create filename with frame number
   std::string filename = "data/" + std::to_string(frameId) + ".csv";
   std::ofstream outFile(filename);
 
@@ -746,13 +696,11 @@ void saveUpsampledPositionsToCSV(
     return;
   }
 
-  // Get positions from device
   std::vector<float3> positions(upsampled_particles->size());
   CUDA_CALL(cudaMemcpy(positions.data(), upsampled_particles->get_pos_ptr(),
                        positions.size() * sizeof(float3),
                        cudaMemcpyDeviceToHost));
 
-  // Write positions to CSV
   for (const auto &pos : positions) {
     outFile << pos.x << "," << pos.y << "," << pos.z << "\n";
   }
@@ -780,7 +728,6 @@ std::vector<float3> generateSphericalParticles(float radius,
         // Calculate distance from center
         float distance = sqrtf(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
 
-        // Only add the particle if it's within the sphere
         if (distance <= radius) {
           // Offset to center of space and add translation
           float3 finalPos =
@@ -797,7 +744,6 @@ std::vector<float3> generateSphericalParticles(float radius,
 }
 
 void init_granular_system() {
-  // NOTE: Fill up the initial positions of the particles
 
   std::vector<float3> pos;
   // // pos = generateSphericalParticles(1, initSpacing);
@@ -1095,8 +1041,7 @@ void init_granular_system() {
         centroid = centroid / (float)additional_particles.size();
 
         // Apply 90-degree rotation around x-axis for each particle
-        const float angle =
-            90.0f * M_PI / 180.0f; // Convert 90 degrees to radians
+        const float angle = 90.0f * M_PI / 180.0f;
         const float cos_theta = cosf(angle);
         const float sin_theta = sinf(angle);
 
@@ -1125,7 +1070,6 @@ void init_granular_system() {
         }
 
         stored_additional_particles = additional_particles;
-        // Append rotated particles
         pos.insert(pos.end(), additional_particles.begin(),
                    additional_particles.end());
       }

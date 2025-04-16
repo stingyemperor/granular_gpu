@@ -1,4 +1,3 @@
-
 #pragma once
 #include "Global.hpp"
 #include <cuda_runtime.h>
@@ -20,7 +19,6 @@ public:
       throw std::runtime_error("Suspiciously large array size requested");
     }
 
-    // Check available memory before allocation
     size_t free_mem, total_mem;
     cudaMemGetInfo(&free_mem, &total_mem);
     size_t required_mem = sizeof(T) * _capacity;
@@ -31,7 +29,6 @@ public:
       throw std::runtime_error("Insufficient GPU memory");
     }
 
-    // Try allocation with error checking
     cudaError_t err = cudaMalloc(&_addr, required_mem);
     if (err != cudaSuccess) {
       std::cerr << "CUDA malloc failed for size " << size << " capacity "
@@ -40,7 +37,6 @@ public:
       throw std::runtime_error("CUDA malloc failed");
     }
 
-    // Initialize memory to zero
     err = cudaMemset(_addr, 0, required_mem);
     if (err != cudaSuccess) {
       cudaFree(_addr);
@@ -59,12 +55,10 @@ public:
     }
   }
 
-  // Basic accessors
   unsigned int length() const { return _length; }
   unsigned int capacity() const { return _capacity; }
   T *addr() const { return _addr; }
 
-  // Compact array using removal flags - Thrust optimized version
   unsigned int compact(const DArray<int> &removal_flags) {
     size_t free_mem, total_mem;
     cudaMemGetInfo(&free_mem, &total_mem);
@@ -103,7 +97,6 @@ public:
         throw std::runtime_error("Inconsistent compact results");
       }
 
-      // Copy back compacted data
       if (new_length < _length) {
         cudaError_t err =
             cudaMemcpy(_addr, thrust::raw_pointer_cast(temp.data()),
@@ -128,8 +121,6 @@ public:
     }
   }
 
-  // Append elements from another DArray
-
   void append(const DArray<T> &other) {
     const unsigned int other_length = other.length();
     if (other_length == 0) {
@@ -138,9 +129,7 @@ public:
 
     const unsigned int new_length = _length + other_length;
 
-    // Check if we need to resize
     if (new_length > _capacity) {
-      // Resize with some extra capacity to avoid frequent resizes
       unsigned int new_capacity = std::max(new_length, _capacity * 2);
       resize(new_capacity);
     }
@@ -157,32 +146,24 @@ public:
                                cudaGetErrorString(err));
     }
 
-    // Update length
     _length = new_length;
 
-    // Verify the append was successful
     cudaDeviceSynchronize();
     if (cudaGetLastError() != cudaSuccess) {
       throw std::runtime_error("Error occurred during array append");
     }
   }
 
-  // Remove elements within a range
   void remove(unsigned int start, unsigned int count) {
     if (start + count > _length) {
       throw std::runtime_error("Remove range exceeds array bounds");
     }
 
     if (start + count < _length) {
-      // Create thrust device pointers
       thrust::device_ptr<T> data_ptr(_addr);
 
-      // Move remaining elements to fill the gap
-      thrust::copy(thrust::device,
-                   data_ptr + start + count, // Source start
-                   data_ptr + _length,       // Source end
-                   data_ptr + start          // Destination start
-      );
+      thrust::copy(thrust::device, data_ptr + start + count, data_ptr + _length,
+                   data_ptr + start);
     }
 
     _length -= count;
@@ -196,7 +177,6 @@ public:
 
     const unsigned int length = arrays[0]->length();
 
-    // Verify all arrays have same length
     for (size_t i = 1; i < arrays.size(); i++) {
       if (arrays[i]->length() != length) {
         throw std::runtime_error(std::string("Array length mismatch between ") +
@@ -204,12 +184,10 @@ public:
       }
     }
 
-    // Create host vectors for verification
     std::vector<std::vector<T>> initial_data(arrays.size());
     std::vector<std::vector<T>> final_data(arrays.size());
     std::vector<int> remove_flags(length);
 
-    // Copy initial data and removal flags to host
     for (size_t i = 0; i < arrays.size(); i++) {
       initial_data[i].resize(length);
       CUDA_CALL(cudaMemcpy(initial_data[i].data(), arrays[i]->addr(),
@@ -218,12 +196,10 @@ public:
     CUDA_CALL(cudaMemcpy(remove_flags.data(), removal_flags.addr(),
                          sizeof(int) * length, cudaMemcpyDeviceToHost));
 
-    // Perform compaction
     for (auto arr : arrays) {
       arr->compact(removal_flags);
     }
 
-    // Copy final data to host
     const unsigned int new_length = arrays[0]->length();
     for (size_t i = 0; i < arrays.size(); i++) {
       if (arrays[i]->length() != new_length) {
@@ -234,7 +210,6 @@ public:
                            sizeof(T) * new_length, cudaMemcpyDeviceToHost));
     }
 
-    // Verify ordering is maintained
     std::vector<int> surviving_indices;
     for (unsigned int i = 0; i < length; i++) {
       if (remove_flags[i] != 1) {
@@ -266,11 +241,9 @@ public:
     T *new_addr;
     CUDA_CALL(cudaMalloc(&new_addr, sizeof(T) * new_capacity));
 
-    // Create thrust device pointers
     thrust::device_ptr<T> dst_ptr(new_addr);
     thrust::device_ptr<T> src_ptr(_addr);
 
-    // Copy existing data
     if (_length > 0) {
       thrust::copy(thrust::device, src_ptr,
                    src_ptr + std::min(_length, new_capacity), dst_ptr);
