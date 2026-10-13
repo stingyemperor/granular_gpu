@@ -2,6 +2,7 @@
 #include "DArray.hpp"
 #include "Global.hpp"
 #include <thrust/device_vector.h>
+#include <stdexcept>
 #include <vector>
 
 class Particles {

@@ -4,6 +4,10 @@
 #include <thrust/reduce.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <vector>
 
 class Solver {
 public:

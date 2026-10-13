@@ -1,6 +1,9 @@
 #pragma once
 #include "DArray.hpp"
 #include "Particles.hpp"
+#include <iostream>
+#include <stdexcept>
+#include <vector>
 
 class GranularParticles final : public Particles {
 public:

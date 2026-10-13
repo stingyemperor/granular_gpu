@@ -1,13 +1,15 @@
 cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+# Must be set before project(), which otherwise picks the compiler default.
+# Override with e.g. -DCMAKE_CUDA_ARCHITECTURES=native
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 CACHE STRING "CUDA architectures")
+endif()
+
 project(granular_gpu VERSION 0.2.0 LANGUAGES CXX CUDA)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-endif()
-
-# Override with e.g. -DCMAKE_CUDA_ARCHITECTURES=native
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)

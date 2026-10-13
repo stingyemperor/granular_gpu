@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
+#include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/gather.h>

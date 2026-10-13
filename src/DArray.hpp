@@ -8,6 +8,10 @@
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/remove.h>
+#include <algorithm>
+#include <iostream>
+#include <string>
+#include <vector>
 
 template <typename T> class DArray {
 public:

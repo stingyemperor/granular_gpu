@@ -11,7 +11,9 @@
 #include <curand_kernel.h>
 #include <device_atomic_functions.h>
 #include <fstream>
-#include <ostream>
+#include <iostream>
+#include <stdexcept>
+#include <string>
 #include <stdatomic.h>
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
@@ -23,6 +25,7 @@
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <tuple>
+#include <vector>
 #include <unistd.h>
 #include <vector_types.h>
 

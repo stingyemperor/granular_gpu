@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <numeric>
+#include <string>
 
 namespace {
 
