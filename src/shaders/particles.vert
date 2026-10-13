@@ -12,7 +12,7 @@ varying mat4 u_Persp;
 
 void main(void) {
 
-	vec3 posEye = (gl_ModelViewMatrix  * vec4(gl_Vertex.xyz, 1.0f)).xyz;
+	vec3 posEye = (gl_ModelViewMatrix  * vec4(gl_Vertex.xyz, 1.0)).xyz;
 	float dist = length(posEye);
 
 

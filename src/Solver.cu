@@ -19,6 +19,7 @@
 #include <thrust/fill.h>
 #include <thrust/functional.h>
 #include <thrust/host_vector.h>
+#include <thrust/inner_product.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <tuple>
@@ -35,49 +36,6 @@ __device__ __constant__ float target_density = 100.0f; // For water-like density
 
 int t_merge_iter = 0;
 int t_iter_iter = 0;
-
-void print_darray_int(const DArray<int> &_num_constraints) {
-  // Step 1: Allocate host memory
-  const unsigned int length = _num_constraints.length();
-  std::vector<int> host_array(length);
-
-  // Step 2: Copy data from device to host
-  CUDA_CALL(cudaMemcpy(host_array.data(), _num_constraints.addr(),
-                       sizeof(int) * length, cudaMemcpyDeviceToHost));
-
-  // Step 3: Print the data
-  for (size_t i = 0; i < length; ++i) {
-    std::cout << "Constraint[" << i << "] = " << host_array[i] << std::endl;
-  }
-}
-
-void print_mass(const DArray<float> &mass) {
-  // Step 1: Allocate host memory
-  const unsigned int length = mass.length();
-  std::vector<float> host_array(length);
-
-  // Step 2: Copy data from device to host
-  CUDA_CALL(cudaMemcpy(host_array.data(), mass.addr(), sizeof(float) * length,
-                       cudaMemcpyDeviceToHost));
-
-  // Step 3: Print the data
-  for (size_t i = -1; i < length; ++i) {
-    std::cout << "Mass[" << i << "] = " << host_array[i] << std::endl;
-  }
-}
-
-void print_positions(const DArray<float3> &positions) {
-  const unsigned int length = positions.length();
-  std::vector<float3> host_array(length);
-
-  CUDA_CALL(cudaMemcpy(host_array.data(), positions.addr(),
-                       sizeof(float3) * length, cudaMemcpyDeviceToHost));
-
-  for (size_t i = 0; i < length; ++i) {
-    std::cout << "Position[" << i << "] = (" << host_array[i].x << ", "
-              << host_array[i].y << ", " << host_array[i].z << ")" << std::endl;
-  }
-}
 
 void Solver::step(std::shared_ptr<GranularParticles> &particles,
                   const std::shared_ptr<GranularParticles> &boundary,
@@ -487,7 +445,6 @@ void Solver::project(std::shared_ptr<GranularParticles> &particles,
 
     thrust::fill(thrust_num_constraints, thrust_num_constraints + num, 0);
 
-    // print_darray_int(_num_constraints);
 
     compute_delta_pos<<<(num - 1) / block_size + 1, block_size>>>(
 
@@ -1414,20 +1371,15 @@ void Solver::trigger_explosion(std::shared_ptr<GranularParticles> &particles,
   if (num == 0)
     return;
 
-  // Calculate center of mass
-  float3 center_of_mass = make_float3(0.0f, 0.0f, 0.0f);
-  float total_mass = 0.0f;
-
-  // Use thrust to calculate center of mass
+  // center of mass
   thrust::device_ptr<float3> pos_ptr(particles->get_pos_ptr());
   thrust::device_ptr<float> mass_ptr(particles->get_mass_ptr());
-
-  for (int i = 0; i < num; i++) {
-    float mass = mass_ptr[i];
-    float3 pos = pos_ptr[i];
-    center_of_mass += make_float3(pos.x * mass, pos.y * mass, pos.z * mass);
-    total_mass += mass;
-  }
+  const float total_mass =
+      thrust::reduce(thrust::device, mass_ptr, mass_ptr + num, 0.0f);
+  float3 center_of_mass = thrust::inner_product(
+      thrust::device, pos_ptr, pos_ptr + num, mass_ptr,
+      make_float3(0.0f, 0.0f, 0.0f), thrust::plus<float3>(),
+      [] __device__(const float3 &p, float m) { return p * m; });
 
   if (total_mass > 0) {
     center_of_mass = center_of_mass / total_mass;

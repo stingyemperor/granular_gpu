@@ -97,6 +97,11 @@ public:
 
   void save_particle_stats(const std::string &filename);
 
+  // One entry per adaptive step: (merged, split, particles before the step).
+  const std::vector<std::tuple<int, int, int>> &get_particle_stats() const {
+    return _particle_stats;
+  }
+
 private:
   const int _max_iter;
   const int _blend_factor;
@@ -113,6 +118,5 @@ private:
   DArray<int> _buffer_merge_lock;
   int _particles_merging;
   int _particles_splitting;
-  std::vector<std::tuple<int, int, int>>
-      _particle_stats; // frame, merging, splitting, total
+  std::vector<std::tuple<int, int, int>> _particle_stats;
 };

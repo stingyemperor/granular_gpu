@@ -18,10 +18,10 @@ void main(void)
     N.z = sqrt(1.0-mag);
 
     //calculate depth
-    vec4 pixelPos = vec4(fs_PosEye + normalize(N)*fs_pointSize,1.0f);
+    vec4 pixelPos = vec4(fs_PosEye + normalize(N)*fs_pointSize,1.0);
     vec4 clipSpacePos = u_Persp * pixelPos;
     //gl_FragDepth = clipSpacePos.z / clipSpacePos.w;
 
-    gl_FragColor = vec4(exp(-mag*mag)*gl_Color.rgb,1.0f);
-	//gl_FragColor = vec4(vec3(0.03f),1.0f);
+    gl_FragColor = vec4(exp(-mag*mag)*gl_Color.rgb,1.0);
+	//gl_FragColor = vec4(vec3(0.03f),1.0);
 }

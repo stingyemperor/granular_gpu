@@ -1,4 +1,5 @@
 {
+  "scene": "box",
   "space_size": {
     "x": 2.0,
     "y": 1.8,
@@ -10,29 +11,37 @@
     "y": -9.8,
     "z": 0.0
   },
-  "sph_spacing": 0.02,
-  "init_spacing": 0.005,
-  "smoothing_radius": 0.04,
-  "cell_length": 0.0404,
   "density": 2387324.146,
-  "box_size": {
-    "x": 1.5,
-    "y": 1.5,
-    "z": 1.5
+  "cell_length": 0.0404,
+  "particle_grid": {
+    "x": 2,
+    "y": 2,
+    "z": 2
   },
-  "scene": 1,
-  "boundary_translation": {
-    "x": 0.0,
-    "y": 0.0,
-    "z": 0.0
-  },
+  "init_spacing": 0.005,
   "particle_translation": {
     "x": 0.1,
     "y": 0.1,
     "z": 0.1
   },
-  "obj_file": "",
-  "is_adaptive": 1,
-  "save_boundary": false,
-  "save_file": "/home/samraatg/Documents/cgi_backup/box_opening_no"
+  "boundary_translation": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "adaptive": true,
+  "output": {
+    "dir": "output/box_opening_no",
+    "stats_csv": true,
+    "frame_times": true,
+    "export": {
+      "upsampled": false,
+      "upsampled_centered": false,
+      "upsampled_csv": false,
+      "by_mass": false,
+      "animated_boundary": false,
+      "animated_boundary_centered": false,
+      "start_frame": 0
+    }
+  }
 }

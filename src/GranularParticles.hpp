@@ -94,7 +94,7 @@ public:
     // }
   }
 
-  int *get_is_animated_ptr() { return _is_animated.addr(); }
+  int *get_is_animated_ptr() const { return _is_animated.addr(); }
 
   virtual ~GranularParticles() noexcept {}
 

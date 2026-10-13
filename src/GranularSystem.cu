@@ -435,11 +435,8 @@ float GranularSystem::step() {
   CUDA_CALL(cudaEventDestroy(start));
   CUDA_CALL(cudaEventDestroy(stop));
 
-  frame_times.push_back(milliseconds); // Store the frame time
-  std::cout << "Frame time : " << milliseconds << "\n";
-
-  // return milliseconds;
-  return 1;
+  frame_times.push_back(milliseconds);
+  return milliseconds;
 }
 
 void GranularSystem::compute_boundary_mass() {

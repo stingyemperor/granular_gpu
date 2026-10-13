@@ -16,6 +16,7 @@ public:
   GranularSystem(const GranularSystem &) = delete;
   GranularSystem &operator=(const GranularSystem &) = delete;
 
+  // Advances one time step; returns the GPU time it took in milliseconds.
   float step();
 
   int size() const { return (*_particles).size(); }
@@ -41,9 +42,9 @@ public:
     return static_cast<const std::shared_ptr<GranularParticles>>(_upsampled);
   }
 
-  float const get_max_mass() { return _max_mass; }
-  float const get_min_mass() { return _min_mass; }
-  float const get_upsampled_radius() { return _upsampled_radius; }
+  float get_max_mass() const { return _max_mass; }
+  float get_min_mass() const { return _min_mass; }
+  float get_upsampled_radius() const { return _upsampled_radius; }
 
   const std::vector<float> &get_frame_times() const { return frame_times; }
 
