@@ -72,7 +72,6 @@ void GranularSystem::neighbor_search_granular(
   thrust::sequence(thrust::device, particle_indices.addr(),
                    particle_indices.addr() + num);
 
-  // Map particles to cells
   mapParticles2Cells_CUDA<<<(num - 1) / block_size + 1, block_size>>>(
       particles->get_particle_2_cell(), particles->get_pos_ptr(), _cell_length,
       _cell_size, num);
@@ -190,12 +189,10 @@ void GranularSystem::neighbor_search_boundary(
     throw std::runtime_error("CUDA sync error before mapParticles2Cells");
   }
 
-  // map the particles to their cell idx
   mapParticles2Cells_CUDA<<<(num - 1) / block_size + 1, block_size>>>(
       particles->get_particle_2_cell(), particles->get_pos_ptr(), _cell_length,
       _cell_size, num);
 
-  // Check for kernel errors
   err = cudaGetLastError();
   if (err != cudaSuccess) {
     std::cerr << "Kernel launch error: " << cudaGetErrorString(err)
@@ -209,7 +206,6 @@ void GranularSystem::neighbor_search_boundary(
     throw std::runtime_error("CUDA sync error after mapParticles2Cells");
   }
 
-  // copy the cell indexes to _buffer_int with error checking
   try {
     CUDA_CALL(cudaMemcpy(_buffer_int.addr(), particles->get_particle_2_cell(),
                          sizeof(int) * num, cudaMemcpyDeviceToDevice));
@@ -229,7 +225,6 @@ void GranularSystem::neighbor_search_boundary(
     throw;
   }
 
-  // copy the new sorted indexes back to _buffer_int
   try {
     CUDA_CALL(cudaMemcpy(_buffer_int.addr(), particles->get_particle_2_cell(),
                          sizeof(int) * num, cudaMemcpyDeviceToDevice));
@@ -238,7 +233,6 @@ void GranularSystem::neighbor_search_boundary(
     throw;
   }
 
-  // fill cell_start with zeroes
   try {
     thrust::fill(
         thrust::device, cell_start.addr(),
@@ -248,11 +242,9 @@ void GranularSystem::neighbor_search_boundary(
     throw;
   }
 
-  // add number of particles per cell index to cell_start
   countingInCell_CUDA<<<(num - 1) / block_size + 1, block_size>>>(
       cell_start.addr(), particles->get_particle_2_cell(), num);
 
-  // Check for kernel errors
   err = cudaGetLastError();
   if (err != cudaSuccess) {
     std::cerr << "countingInCell kernel error: " << cudaGetErrorString(err)
@@ -260,7 +252,6 @@ void GranularSystem::neighbor_search_boundary(
     throw std::runtime_error("CUDA kernel error in countingInCell");
   }
 
-  // calculate the prefix sum of cell_start
   try {
     thrust::exclusive_scan(thrust::device, cell_start.addr(),
                            cell_start.addr() +
@@ -271,7 +262,6 @@ void GranularSystem::neighbor_search_boundary(
     throw;
   }
 
-  // Final sync point
   err = cudaDeviceSynchronize();
   if (err != cudaSuccess) {
     std::cerr << "Final sync error: " << cudaGetErrorString(err) << std::endl;

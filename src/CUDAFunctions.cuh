@@ -98,9 +98,7 @@ static __global__ void mapParticles2Cells_CUDA(int *particles2cells,
     return;
   particles2cells[i] = particlePos2cellIdx(
       make_int3(floorf(pos[i].x / cellLength), floorf(pos[i].y / cellLength),
-                floorf(pos[i].z / cellLength))
-
-          ,
+                floorf(pos[i].z / cellLength)),
       cellSize);
 
   return;

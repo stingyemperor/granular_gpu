@@ -1931,7 +1931,8 @@ int main(int argc, char *argv[]) {
   try {
     SceneConfig config;
     try {
-      config = loadSceneConfig("scenes/box.json");
+      config = loadSceneConfig(
+          "/home/samraatg/Documents/granular_gpu/scenes/box.json");
     } catch (const std::exception &e) {
       std::cerr << "Error loading scene config: " << e.what() << std::endl;
       return 1;
