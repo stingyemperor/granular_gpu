@@ -5,28 +5,25 @@
 #include "helper_math.h"
 #include <algorithm>
 #include <cstdio>
-#include <cuda_bf16.h>
-#include <cuda_fp16.h>
 #include <cuda_runtime_api.h>
 #include <curand_kernel.h>
-#include <device_atomic_functions.h>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <stdatomic.h>
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
 #include <thrust/fill.h>
 #include <thrust/functional.h>
 #include <thrust/host_vector.h>
+#include <thrust/iterator/zip_iterator.h>
 #include <thrust/inner_product.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
+#include <thrust/tuple.h>
 #include <tuple>
 #include <vector>
-#include <unistd.h>
 #include <vector_types.h>
 
 __device__ __constant__ double pi = 3.14159265358979323846;
@@ -1368,6 +1365,21 @@ __global__ void apply_explosion_force(float3 *pos, float3 *vel, float *mass,
   vel[idx] += velocity_change;
 }
 
+// Named functors rather than lambdas: CUDA 13's reduce needs to deduce the
+// result type on the host, which it cannot do for __device__ lambdas.
+struct AddFloat3 {
+  __host__ __device__ float3 operator()(const float3 &a,
+                                        const float3 &b) const {
+    return a + b;
+  }
+};
+
+struct MassWeightedPosition {
+  __host__ __device__ float3 operator()(const float3 &p, float m) const {
+    return p * m;
+  }
+};
+
 void Solver::trigger_explosion(std::shared_ptr<GranularParticles> &particles,
                                float explosion_force) {
   int num = particles->size();
@@ -1381,8 +1393,7 @@ void Solver::trigger_explosion(std::shared_ptr<GranularParticles> &particles,
       thrust::reduce(thrust::device, mass_ptr, mass_ptr + num, 0.0f);
   float3 center_of_mass = thrust::inner_product(
       thrust::device, pos_ptr, pos_ptr + num, mass_ptr,
-      make_float3(0.0f, 0.0f, 0.0f), thrust::plus<float3>(),
-      [] __device__(const float3 &p, float m) { return p * m; });
+      make_float3(0.0f, 0.0f, 0.0f), AddFloat3(), MassWeightedPosition());
 
   if (total_mass > 0) {
     center_of_mass = center_of_mass / total_mass;

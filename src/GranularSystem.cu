@@ -14,6 +14,8 @@
 #include <thrust/gather.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/tuple.h>
 #include <vector_functions.h>
 #include <vector_types.h>
 
